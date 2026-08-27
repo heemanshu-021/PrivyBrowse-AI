@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+
+# Node/React
+node_modules/
+dist/
+dist-ssr/
+*.local
+.eslintcache
+.vite-inspect
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environments
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

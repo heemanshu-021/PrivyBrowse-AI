@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Synthetic Search Engine</title>
+  <style>
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      background-color: #0f0f11;
+      color: #dfdfe0;
+      margin: 0;
+      padding: 40px;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    .logo {
+      font-size: 32px;
+      font-weight: bold;
+      color: #3b82f6;
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .search-box {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 30px;
+    }
+    input {
+      flex: 1;
+      padding: 14px;
+      background-color: #1a1a1e;
+      border: 1px solid #2e2e33;
+      border-radius: 24px;
+      color: white;
+      font-size: 15px;
+      padding-left: 20px;
+    }
+    input:focus {
+      outline: none;
+      border-color: #3b82f6;
+    }
+    button {
+      padding: 12px 24px;
+      background-color: #3b82f6;
+      border: none;
+      border-radius: 24px;
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #2563eb;
+    }
+    .results {
+      margin-top: 20px;
+    }
+    .result-item {
+      background-color: #1a1a1e;
+      border: 1px solid #2e2e33;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .result-title {
+      font-size: 18px;
+      color: #60a5fa;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .result-title:hover {
+      text-decoration: underline;
+    }
+    .result-snippet {
+      font-size: 14px;
+      color: #9ca3af;
+      margin-top: 6px;
+    }
+  </style>
+  <script>
+    function performSearch() {
+      const q = document.getElementById("search-input").value;
+      if (q.toLowerCase().includes("chandrayaan")) {
+        document.getElementById("results").innerHTML = `
+          <div class="result-item">
+            <a href="#" class="result-title" onclick="alert('Navigating to Chandrayaan-3 details...')">Chandrayaan-3 - Wikipedia</a>
+            <div class="result-snippet">Chandrayaan-3 is the third Indian lunar exploration mission under the Indian Space Research Organisation's Chandrayaan programme. It consists of a lander named Vikram and a rover named Pragyan...</div>
+          </div>
+          <div class="result-item">
+            <a href="#" class="result-title">ISRO Chandrayaan-3 Landing Highlights</a>
+            <div class="result-snippet">Official video stream and image collections of India's successful soft landing near the lunar south pole.</div>
+          </div>
+        `;
+      } else {
+        document.getElementById("results").innerHTML = `
+          <div class="result-item">
+            <span class="result-title">No direct wiki matches for "${q}"</span>
+            <div class="result-snippet">Try searching for "Chandrayaan-3" to simulate the agent flow.</div>
+          </div>
+        `;
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">IndiSearch</div>
+    <div class="search-box">
+      <input type="text" id="search-input" placeholder="Search the web securely..." onkeydown="if(event.key === 'Enter') performSearch()">
+      <button onclick="performSearch()">Search</button>
+    </div>
+    <div id="results" class="results">
+      <!-- Search results injected here -->
+    </div>
+  </div>
+</body>
+</html>
