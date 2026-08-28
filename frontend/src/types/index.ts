@@ -104,6 +104,68 @@ export interface OCRBlock {
   tag_name?: string;
 }
 
+export type AgentState =
+  | 'IDLE'
+  | 'OBSERVING'
+  | 'PERCEIVING'
+  | 'UNDERSTANDING'
+  | 'PLANNING'
+  | 'VALIDATING'
+  | 'ACTING'
+  | 'VERIFYING'
+  | 'COMPLETED'
+  | 'PAUSED'
+  | 'FAILED'
+  | 'BLOCKED';
+
+export interface Objective {
+  id: string;
+  description: string;
+  target_type?: string;
+  semantic_intent: string;
+  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
+  success_criteria: string;
+  target_keywords?: string[];
+}
+
+export interface CandidateAction {
+  action: ActionType;
+  target_id?: string;
+  target?: { x: number; y: number };
+  target_description: string;
+  text?: string;
+  confidence: number;
+  score: number;
+  score_breakdown?: Record<string, number>;
+  risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  requires_confirmation: boolean;
+  reason: string;
+}
+
+export interface PlanTraceEntry {
+  step: number;
+  timestamp: string;
+  goal: string;
+  current_objective: string;
+  observation_summary: string;
+  candidate_actions_count: number;
+  selected_action?: Record<string, unknown>;
+  state: AgentState;
+}
+
+export interface AgentTask {
+  task_id: string;
+  goal: string;
+  status: AgentState;
+  created_at: string;
+  objectives: Objective[];
+  current_objective_index: number;
+  actions_executed: number;
+  trace: PlanTraceEntry[];
+  is_paused: boolean;
+  last_error?: string;
+}
+
 export interface AgentAction {
   action: ActionType;
   target: { x: number; y: number };
@@ -111,6 +173,9 @@ export interface AgentAction {
   text?: string;
   confidence: number;
   element_id?: string;
+  score?: number;
+  score_breakdown?: Record<string, number>;
+  risk_level?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   requires_confirmation?: boolean;
 }
 

@@ -2,17 +2,15 @@ import React from 'react';
 import { useApp } from '../context/AppContext';
 import { BrowserPreview } from '../components/workspace/BrowserPreview';
 import { ElementInspector } from '../components/workspace/ElementInspector';
+import { PlanningPanel } from '../components/workspace/PlanningPanel';
 import { AgentTimeline } from '../components/timeline/AgentTimeline';
 import { StatusBadge } from '../components/common/StatusBadge';
-import { ConfidenceBadge } from '../components/common/ConfidenceBadge';
 
 export const WorkspacePage: React.FC = () => {
   const {
     taskText,
     setTaskText,
     runPipeline,
-    plannedAction,
-    executePlannedAction,
     isProcessing,
     currentScenario,
     selectScenario,
@@ -112,85 +110,10 @@ export const WorkspacePage: React.FC = () => {
           <BrowserPreview />
         </div>
 
-        {/* Right Column: Planned Action & Deep Inspector */}
+        {/* Right Column: Planning Panel & Deep Inspector */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {/* Planned Action Card */}
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">
-                <span className="card-title-icon">⚡</span>
-                <span>Planned Action</span>
-              </span>
-              {plannedAction && (
-                <StatusBadge status={plannedAction.action} />
-              )}
-            </div>
-
-            {plannedAction ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Target:</span>
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {plannedAction.target_description}
-                  </span>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Coordinates:</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--accent-cyan)' }}>
-                    ({plannedAction.target.x}, {plannedAction.target.y})
-                  </span>
-                </div>
-
-                {plannedAction.text && (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Payload:</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--accent-green)' }}>
-                      "{plannedAction.text}"
-                    </span>
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Confidence:</span>
-                  <ConfidenceBadge confidence={plannedAction.confidence} />
-                </div>
-
-                {plannedAction.requires_confirmation && (
-                  <div
-                    style={{
-                      padding: '8px 10px',
-                      backgroundColor: 'var(--accent-red-subtle)',
-                      border: '1px solid rgba(239, 68, 68, 0.3)',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '11px',
-                      color: 'var(--accent-red)'
-                    }}
-                  >
-                    ⚠️ High-impact action requires safety gatekeeper confirmation.
-                  </div>
-                )}
-
-                <button
-                  className="btn btn-primary"
-                  onClick={executePlannedAction}
-                  disabled={isProcessing}
-                  style={{ marginTop: '4px', width: '100%' }}
-                >
-                  <span>▶</span>
-                  <span>Execute Action Safely</span>
-                </button>
-              </div>
-            ) : (
-              <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px 12px' }}>
-                <div style={{ fontSize: '20px', marginBottom: '4px' }}>⏳</div>
-                <div style={{ fontSize: '12px', fontWeight: 600 }}>No Action Planned</div>
-                <div style={{ fontSize: '11px', marginTop: '2px' }}>
-                  Run the pipeline to formulate the next browser automation step.
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Agent Planning Engine & Control Panel */}
+          <PlanningPanel />
 
           {/* Deep Element & PII Inspector Card */}
           <ElementInspector />

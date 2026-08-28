@@ -1,55 +1,161 @@
-from typing import Dict, Any, Tuple
+"""
+PrivyBrowse AI — Action Validator & Safety Gatekeeper
+Validates proposed browser actions against strict bounds, confidence thresholds,
+loop detection, and privacy policies before execution.
+"""
+
+from typing import Dict, Any, Tuple, Optional, List
+from backend.agent.schemas import (
+    CandidateAction, ValidationResult, RiskLevel, TaskConstraints
+)
+
 
 class ActionValidator:
-    def __init__(self):
+    """
+    Pre-execution Safety Gatekeeper.
+    Guarantees no invalid, unverified, out-of-budget, or high-risk unconfirmed action is executed.
+    """
+
+    def __init__(self, min_confidence: float = 0.50):
         self.valid_actions = {
-            "CLICK", "TYPE", "SCROLL", "PRESS_KEY", 
+            "CLICK", "TYPE", "SCROLL", "PRESS_KEY",
             "NAVIGATE", "WAIT", "GO_BACK", "GO_FORWARD", "FINISH"
         }
+        self.min_confidence = min_confidence
 
-    def validate_action(self, action_json: Dict[str, Any], screen_width: int = 1920, screen_height: int = 1080) -> Tuple[bool, str]:
+    def validate_action(
+        self,
+        action_json: Dict[str, Any],
+        screen_width: int = 1920,
+        screen_height: int = 1080
+    ) -> Tuple[bool, str]:
         """
-        Validates that an action conforms to the expected schemas and bounds.
-        Returns (is_valid, error_message).
+        Legacy-compatible validation method returning (is_valid, error_message).
+        """
+        res = self.validate_candidate(
+            action_json=action_json,
+            fused_elements=[],
+            screen_width=screen_width,
+            screen_height=screen_height
+        )
+        return res.allowed, res.reason
+
+    def validate_candidate(
+        self,
+        action_json: Dict[str, Any],
+        fused_elements: List[Dict[str, Any]] = None,
+        constraints: Optional[TaskConstraints] = None,
+        actions_executed_so_far: int = 0,
+        history: List[Dict[str, Any]] = None,
+        screen_width: int = 1920,
+        screen_height: int = 1080
+    ) -> ValidationResult:
+        """
+        Comprehensive pre-execution validation.
         """
         if not isinstance(action_json, dict):
-            return False, "Action must be a JSON object"
+            return ValidationResult(allowed=False, reason="ACTION_MUST_BE_JSON_OBJECT")
 
         action_name = action_json.get("action")
         if not action_name or action_name not in self.valid_actions:
-            return False, f"Invalid or missing action name: {action_name}. Must be one of {self.valid_actions}"
+            return ValidationResult(
+                allowed=False,
+                reason=f"INVALID_ACTION_NAME: '{action_name}'. Must be one of {self.valid_actions}"
+            )
 
-        # Coordinate-based validation for CLICK, TYPE
-        if action_name in ["CLICK", "TYPE"]:
+        # 1. Action Budget Check
+        task_limits = constraints or TaskConstraints()
+        if actions_executed_so_far >= task_limits.max_actions:
+            return ValidationResult(
+                allowed=False,
+                reason=f"ACTION_BUDGET_EXCEEDED: Max limit of {task_limits.max_actions} actions reached.",
+                risk_level=RiskLevel.HIGH
+            )
+
+        # 2. Loop Detection Check
+        hist = history or []
+        if len(hist) >= 3:
+            target_id = action_json.get("target_id") or action_json.get("element_id")
+            recent_same = [
+                h for h in hist[-3:]
+                if h.get("action") == action_name and (h.get("targetId") == target_id or h.get("element_id") == target_id)
+            ]
+            if len(recent_same) >= 3:
+                return ValidationResult(
+                    allowed=False,
+                    reason="POSSIBLE_AGENT_LOOP: Same action repeated 3 times on same target without progress.",
+                    risk_level=RiskLevel.HIGH
+                )
+
+        # 3. Coordinate & Boundary Checks for CLICK / TYPE
+        if action_name in ("CLICK", "TYPE"):
             target = action_json.get("target")
             if not target or not isinstance(target, dict):
-                return False, f"Action {action_name} requires a target coordinate object"
-            
+                return ValidationResult(
+                    allowed=False,
+                    reason=f"MISSING_TARGET_COORDINATES: Action {action_name} requires a target {{x, y}} object"
+                )
+
             x = target.get("x")
             y = target.get("y")
-            
-            if x is None or y is None:
-                return False, f"Target coordinates x and y are required for {action_name}"
-                
-            if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
-                return False, "Target coordinates must be numbers"
-                
-            if x < 0 or y < 0:
-                return False, "Coordinates cannot be negative"
-                
-            if x > screen_width or y > screen_height:
-                return False, f"Coordinates ({x}, {y}) are out of boundary of screen dimensions ({screen_width}x{screen_height})"
 
-        # Check TYPE specific parameters
+            if x is None or y is None:
+                return ValidationResult(allowed=False, reason="Target coordinates x and y are required")
+
+            if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+                return ValidationResult(allowed=False, reason="Target coordinates must be numbers")
+
+            if x < 0 or y < 0:
+                return ValidationResult(allowed=False, reason="Coordinates cannot be negative")
+
+            if x > screen_width or y > screen_height:
+                return ValidationResult(
+                    allowed=False,
+                    reason=f"COORDINATES_OUT_OF_BOUNDS: ({x}, {y}) exceeds screen bounds ({screen_width}x{screen_height})"
+                )
+
+        # 4. Confidence Threshold Check
+        conf = float(action_json.get("confidence", 0.90))
+        if conf < self.min_confidence:
+            return ValidationResult(
+                allowed=False,
+                reason=f"LOW_TARGET_CONFIDENCE: Confidence {conf:.2f} is below minimum threshold {self.min_confidence:.2f}",
+                risk_level=RiskLevel.MEDIUM
+            )
+
+        # 5. Financial / Confirmation Policy Check
+        risk = action_json.get("risk_level", RiskLevel.LOW)
+        if isinstance(risk, str):
+            try:
+                risk = RiskLevel(risk)
+            except Exception:
+                risk = RiskLevel.LOW
+
+        requires_confirmation = bool(action_json.get("requires_confirmation", False))
+        if risk == RiskLevel.CRITICAL or requires_confirmation:
+            if task_limits.require_confirmation_for_sensitive and not action_json.get("confirmed_by_user", False):
+                return ValidationResult(
+                    allowed=False,
+                    reason="REQUIRES_HUMAN_CONFIRMATION: High-impact or financial action detected.",
+                    risk_level=RiskLevel.CRITICAL,
+                    requires_confirmation=True
+                )
+
+        # 6. TYPE Specific Checks
         if action_name == "TYPE":
             text = action_json.get("text")
             if text is None:
-                return False, "Action TYPE requires a 'text' parameter"
+                return ValidationResult(allowed=False, reason="TYPE action requires a 'text' parameter")
 
-        # Check navigation parameters
+        # 7. NAVIGATE Specific Checks
         if action_name == "NAVIGATE":
             url = action_json.get("url")
             if not url:
-                return False, "Action NAVIGATE requires a 'url' parameter"
+                return ValidationResult(allowed=False, reason="NAVIGATE action requires a 'url' parameter")
 
-        return True, "Valid"
+        return ValidationResult(
+            allowed=True,
+            reason="VALIDATION_PASSED",
+            risk_level=risk,
+            requires_confirmation=requires_confirmation
+        )

@@ -151,6 +151,26 @@ class PolicyUpdateRequest(BaseModel):
     min_confidence_threshold: Optional[float] = None
     default_redaction_style: Optional[str] = None
 
+class AgentTaskCreateRequest(BaseModel):
+    goal: str
+    max_actions: Optional[int] = 15
+    require_confirmation_for_sensitive: Optional[bool] = True
+
+class AgentStepRequest(BaseModel):
+    fused_elements: List[Dict[str, Any]]
+    history: Optional[List[Dict[str, Any]]] = None
+    task_goal: Optional[str] = None
+
+class AgentVerifyRequest(BaseModel):
+    action: Dict[str, Any]
+    prev_elements: List[Dict[str, Any]]
+    current_elements: List[Dict[str, Any]]
+    prev_url: Optional[str] = ""
+    current_url: Optional[str] = ""
+
+class AgentControlRequest(BaseModel):
+    command: str  # "start", "pause", "resume", "stop"
+
 # --- API ENDPOINTS ---
 
 @app.get("/api/health")
@@ -420,15 +440,84 @@ def get_privacy_status():
     """Returns real-time privacy shield status and metrics."""
     return privacy_gate.get_status()
 
-@app.post("/api/agent/plan")
-def plan_agent_action(req: PlanRequest):
-    t_start = time.time()
-    action = agent_planner.plan_action(req.task, req.fused_elements, req.history)
-    t_plan = time.time() - t_start
-    metrics_store["last_planning_latency"] = t_plan
+@app.post("/api/agent/task/create")
+def create_agent_task(req: AgentTaskCreateRequest):
+    """Creates a structured task and decomposes it into sub-objectives."""
+    from backend.agent.schemas import TaskConstraints
+    constraints = TaskConstraints(
+        max_actions=req.max_actions or 15,
+        require_confirmation_for_sensitive=req.require_confirmation_for_sensitive if req.require_confirmation_for_sensitive is not None else True
+    )
+    task = agent_planner.create_task(goal=req.goal, constraints=constraints)
+    return {
+        "success": True,
+        "task": task.model_dump()
+    }
+
+@app.post("/api/agent/step")
+def run_agent_step(req: AgentStepRequest):
+    """Runs a single reasoning step: selects active objective, scores candidates, validates safety."""
+    candidate, validation, state = agent_planner.plan_next_step(
+        sanitized_elements=req.fused_elements,
+        history=req.history or [],
+        task_goal=req.task_goal
+    )
+    return {
+        "state": state.value,
+        "candidate": candidate.model_dump() if candidate else None,
+        "validation": validation.model_dump(),
+        "task_summary": agent_planner.get_agent_status()
+    }
+
+@app.post("/api/agent/verify")
+def verify_agent_action(req: AgentVerifyRequest):
+    """Verifies the state change outcome of an executed action."""
+    result = agent_planner.verify_step_outcome(
+        action=req.action,
+        prev_elements=req.prev_elements,
+        current_elements=req.current_elements,
+        prev_url=req.prev_url or "",
+        current_url=req.current_url or ""
+    )
+    return {
+        "verification": result.model_dump(),
+        "agent_state": agent_planner.state_machine.current_state.value
+    }
+
+@app.post("/api/agent/control")
+def control_agent(req: AgentControlRequest):
+    """Controls agent state: start, pause, resume, stop."""
+    cmd = req.command.lower()
+    if cmd == "pause":
+        new_state = agent_planner.pause()
+    elif cmd == "resume":
+        new_state = agent_planner.resume()
+    elif cmd == "stop":
+        new_state = agent_planner.stop()
+    else:
+        new_state = agent_planner.state_machine.current_state
 
     return {
-        "action": action
+        "success": True,
+        "command": cmd,
+        "state": new_state.value
+    }
+
+@app.get("/api/agent/state")
+def get_agent_state():
+    """Returns real-time agent state, active task, objectives, and planning trace."""
+    return agent_planner.get_agent_status()
+
+@app.post("/api/agent/plan")
+def plan_agent_action(req: PlanRequest):
+    t_start = time.perf_counter()
+    action = agent_planner.plan_action(req.task, req.fused_elements, req.history)
+    t_plan_ms = (time.perf_counter() - t_start) * 1000.0
+    metrics_store["last_planning_latency"] = t_plan_ms / 1000.0
+
+    return {
+        "action": action,
+        "latency_ms": round(t_plan_ms, 2)
     }
 
 @app.post("/api/action/execute")
