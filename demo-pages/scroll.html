@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrivyBrowse Long Scroll Test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0b0f19; color: #e2e8f0; font-family: -apple-system, sans-serif; padding: 16px; }
+    .container { max-width: 480px; margin: 0 auto; }
+    h1 { font-size: 16px; color: #00f2fe; text-align: center; margin-bottom: 6px; }
+    .subtitle { font-size: 10px; color: #64748b; text-align: center; margin-bottom: 16px; }
+    .section { background: #111827; border: 1px solid #1e293b; border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+    .section h2 { font-size: 13px; color: #f8fafc; margin-bottom: 6px; }
+    .section p { font-size: 11px; color: #94a3b8; line-height: 1.6; }
+    .btn { display: inline-block; padding: 7px 14px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; border: none; margin-top: 6px; }
+    .btn-cyan { background: #00f2fe; color: #090d16; }
+    .btn-blue { background: #0284c7; color: white; }
+    a { color: #38bdf8; text-decoration: none; }
+    .scroll-indicator { position: fixed; bottom: 16px; right: 16px; background: rgba(0,242,254,0.15); color: #00f2fe; padding: 6px 10px; border-radius: 6px; font-size: 10px; border: 1px solid rgba(0,242,254,0.3); }
+    input { width: 100%; background: #0a0e17; border: 1px solid #334155; border-radius: 5px; padding: 7px 10px; color: #fff; font-size: 11px; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Long Scrolling Document</h1>
+    <p class="subtitle">Tests viewport-only perception — elements below the fold should not be visually detected until scrolled</p>
+
+    <!-- Section 1 (visible in viewport) -->
+    <div class="section" id="sec-1">
+      <h2>Section 1: Introduction</h2>
+      <p>PrivyBrowse AI implements on-device visual perception for lightweight browser agents. This section is visible in the initial viewport. The perception engine should detect this heading and text block.</p>
+      <button class="btn btn-cyan" id="btn-s1" onclick="alert('Section 1 action')">Learn More</button>
+    </div>
+
+    <!-- Section 2 -->
+    <div class="section" id="sec-2">
+      <h2>Section 2: Architecture</h2>
+      <p>The perception pipeline runs locally using OpenCV contour detection, Tesseract OCR, and DOM accessibility integration. All processing stays on-device within the local trust boundary.</p>
+      <a href="#sec-3" id="link-arch">View Technical Details →</a>
+    </div>
+
+    <!-- Section 3 -->
+    <div class="section" id="sec-3">
+      <h2>Section 3: Privacy Guarantees</h2>
+      <p>Raw screenshots are never transmitted to external servers. PII detection uses local regex classifiers and Haar Cascade face detection. Redaction is applied before any data leaves the device.</p>
+    </div>
+
+    <!-- Section 4 -->
+    <div class="section" id="sec-4">
+      <h2>Section 4: Performance</h2>
+      <p>The lightweight architecture targets sub-200ms total perception latency. OpenCV contour detection runs in under 50ms. OCR processing typically completes within 100ms on modern hardware.</p>
+    </div>
+
+    <!-- Section 5 (below the fold) -->
+    <div class="section" id="sec-5">
+      <h2>Section 5: Feedback Form</h2>
+      <p>Help us improve by providing feedback on perception accuracy.</p>
+      <input type="text" id="feedback-name" placeholder="Your name">
+      <input type="email" id="feedback-email" placeholder="your@email.com">
+      <textarea id="feedback-text" placeholder="Your feedback..." style="width:100%; height:60px; background:#0a0e17; border:1px solid #334155; border-radius:5px; padding:7px 10px; color:#fff; font-size:11px; margin-top:6px; resize: none;"></textarea>
+      <button class="btn btn-blue" id="btn-submit-feedback" style="width:100%;" onclick="alert('Feedback submitted!')">Submit Feedback</button>
+    </div>
+
+    <!-- Section 6 (far below) -->
+    <div class="section" id="sec-6">
+      <h2>Section 6: Footer Links</h2>
+      <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px;">
+        <a href="#home" id="link-home">Home</a>
+        <a href="#docs" id="link-docs">Documentation</a>
+        <a href="#api" id="link-api">API Reference</a>
+        <a href="#github" id="link-github">GitHub</a>
+        <a href="#contact" id="link-contact">Contact</a>
+      </div>
+    </div>
+
+    <!-- Spacer to ensure long scroll -->
+    <div style="height: 400px;"></div>
+  </div>
+
+  <div class="scroll-indicator" id="scroll-indicator">
+    Scroll Position: <span id="scroll-pos">0</span>px
+  </div>
+
+  <script>
+    window.addEventListener('scroll', function() {
+      document.getElementById('scroll-pos').textContent = Math.round(window.scrollY);
+    });
+  </script>
+</body>
+</html>

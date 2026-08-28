@@ -73,3 +73,6 @@ class ElementDetector:
             })
             
         return detected
+
+    # Backwards compatibility alias
+    detect_interactive_elements = detect_elements

@@ -7,10 +7,10 @@ import { BrowserPreview } from '../components/workspace/BrowserPreview';
 import { ElementInspector } from '../components/workspace/ElementInspector';
 
 export const PerceptionPage: React.FC = () => {
-  const { fusedElements, selectedElementId, setSelectedElementId, setSelectedPiiId, runPipeline, isProcessing } = useApp();
+  const { fusedElements, selectedElementId, setSelectedElementId, setSelectedPiiId, runPipeline, isProcessing, perceptionStatus, metrics, backendConnected } = useApp();
   const [filterType, setFilterType] = useState<string>('ALL');
 
-  const filters = ['ALL', 'BUTTON', 'INPUT', 'LINK', 'IMAGE', 'FUSED'];
+  const filters = ['ALL', 'BUTTON', 'INPUT', 'LINK', 'IMAGE', 'HEADING', 'TEXT', 'FUSED'];
 
   const filteredElements = fusedElements.filter((el) => {
     if (filterType === 'ALL') return true;
@@ -25,23 +25,57 @@ export const PerceptionPage: React.FC = () => {
         <div>
           <h1 className="page-title">Visual Perception Inspector</h1>
           <p className="page-subtitle">
-            Debug and inspect OpenCV visual contours, OCR layout blocks, and DOM elements fused via bounding box IoU alignment.
+            On-device visual perception pipeline: OpenCV contour detection, Tesseract OCR, DOM accessibility fusion, and multi-source confidence scoring.
           </p>
         </div>
 
-        <button className="btn btn-cyan" onClick={runPipeline} disabled={isProcessing}>
-          <span>{isProcessing ? '⏳' : '⚡'}</span>
-          <span>{isProcessing ? 'Processing...' : 'Run Perception Scan'}</span>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <StatusBadge
+            status={perceptionStatus === 'RUNNING' ? 'PROCESSING' : perceptionStatus === 'ERROR' ? 'ERROR' : 'READY'}
+            variant={perceptionStatus === 'RUNNING' ? 'amber' : perceptionStatus === 'ERROR' ? 'red' : 'green'}
+            dot
+          />
+          <button className="btn btn-cyan" onClick={runPipeline} disabled={isProcessing}>
+            <span>{isProcessing ? '⏳' : '⚡'}</span>
+            <span>{isProcessing ? 'Processing...' : 'Run Perception Scan'}</span>
+          </button>
+        </div>
       </div>
 
-      {/* 2. Top Preview & Inspector Row */}
+      {/* 2. Latency Breakdown */}
+      {backendConnected && metrics.local_inference_time_ms > 0 && (
+        <div className="card" style={{ padding: '14px 18px' }}>
+          <div className="card-header" style={{ marginBottom: '8px' }}>
+            <span className="card-title">
+              <span className="card-title-icon">⏱️</span>
+              <span>Perception Latency Breakdown</span>
+            </span>
+            <StatusBadge status="LOCAL / UNSANITIZED" variant="amber" />
+          </div>
+          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+            {[
+              { label: 'CV Detection', value: metrics.local_inference_time_ms, color: 'var(--accent-cyan)' },
+              { label: 'OCR', value: metrics.ocr_latency_ms, color: 'var(--accent-green)' },
+              { label: 'Total Pipeline', value: metrics.total_task_latency_ms, color: 'var(--accent-cyan)' },
+            ].map((m) => (
+              <div key={m.label} style={{ textAlign: 'center', minWidth: '80px' }}>
+                <div style={{ fontSize: '18px', fontWeight: 700, color: m.color, fontFamily: 'var(--font-mono)' }}>
+                  {m.value.toFixed(1)}
+                </div>
+                <div style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{m.label} (ms)</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 3. Top Preview & Inspector Row */}
       <div className="workspace-grid">
         <BrowserPreview />
         <ElementInspector />
       </div>
 
-      {/* 3. Coordinate Map & Elements Table */}
+      {/* 4. Coordinate Map & Elements Table */}
       <div className="card">
         <div className="card-header">
           <span className="card-title">

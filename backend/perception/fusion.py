@@ -118,3 +118,6 @@ class ContextFuser:
             })
 
         return fused_elements
+
+    # Backwards compatibility alias
+    fuse = fuse_context

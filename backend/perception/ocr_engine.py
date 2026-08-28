@@ -35,3 +35,7 @@ class OCREngine:
             })
             
         return text_blocks
+
+    def extract_text_blocks(self, screenshot_bytes: bytes, dom_nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Compatibility method accepting screenshot bytes and DOM nodes."""
+        return self.extract_text(dom_nodes)

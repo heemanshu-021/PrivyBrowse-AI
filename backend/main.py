@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 
-# Import custom core engines
+# Import custom core engines (legacy)
 from backend.perception.element_detector import ElementDetector
 from backend.perception.ocr_engine import OCREngine
 from backend.perception.fusion import ContextFuser
@@ -14,6 +14,9 @@ from backend.privacy.pii_detector import PIIDetector
 from backend.privacy.redactor import Redactor
 from backend.agent.planner import AgentPlanner
 from backend.actions.executor import ActionExecutor
+
+# Import new modular perception pipeline
+from backend.perception.core.pipeline import PerceptionPipeline
 
 app = FastAPI(
     title="PrivyBrowse AI - On-Device Perception Backend",
@@ -41,6 +44,9 @@ pii_detector = PIIDetector()
 redactor = Redactor()
 agent_planner = AgentPlanner()
 action_executor = ActionExecutor()
+
+# New modular perception pipeline
+perception_pipeline = PerceptionPipeline()
 
 # Live metrics database (stored in memory)
 metrics_store = {
@@ -116,6 +122,18 @@ class BrowserContextSchema(BaseModel):
     elements: List[Dict[str, Any]]
     capture: Dict[str, Any]
 
+class FullPerceptionRequest(BaseModel):
+    screenshot: str  # Base64 image
+    viewport_width: Optional[int] = 0
+    viewport_height: Optional[int] = 0
+    device_pixel_ratio: Optional[float] = 1.0
+    dom_nodes: Optional[List[DOMNodeSchema]] = None
+    page_metadata: Optional[Dict[str, Any]] = None
+    scroll_x: Optional[float] = 0.0
+    scroll_y: Optional[float] = 0.0
+    document_width: Optional[float] = 0.0
+    document_height: Optional[float] = 0.0
+
 # --- API ENDPOINTS ---
 
 @app.get("/api/health")
@@ -173,8 +191,57 @@ def receive_browser_context(req: BrowserContextSchema):
 def get_browser_status():
     return latest_browser_context
 
+@app.post("/api/perception/full")
+def run_full_perception(req: FullPerceptionRequest):
+    """Run the complete modular perception pipeline."""
+    dom_dicts = None
+    if req.dom_nodes:
+        dom_dicts = [n.model_dump(by_alias=True) for n in req.dom_nodes]
+
+    page_meta = req.page_metadata or {}
+
+    result = perception_pipeline.run(
+        screenshot_b64=req.screenshot,
+        viewport_width=req.viewport_width or 0,
+        viewport_height=req.viewport_height or 0,
+        device_pixel_ratio=req.device_pixel_ratio or 1.0,
+        dom_nodes=dom_dicts,
+        page_metadata=page_meta,
+        scroll_x=req.scroll_x or 0.0,
+        scroll_y=req.scroll_y or 0.0,
+        document_width=req.document_width or 0.0,
+        document_height=req.document_height or 0.0,
+    )
+
+    if result.success:
+        metrics_store["runs_count"] += 1
+        metrics_store["last_perception_latency"] = result.latency.visual_detection_ms / 1000.0
+        metrics_store["last_ocr_latency"] = result.latency.ocr_ms / 1000.0
+
+    # Return both the new structured result and legacy-compatible fused_elements
+    legacy_elements = [e.to_legacy_dict() for e in result.elements]
+
+    return {
+        "success": result.success,
+        "page": result.page.model_dump(),
+        "elements": [e.to_agent_dict() for e in result.elements],
+        "fused_elements": legacy_elements,
+        "summary": result.summary.model_dump(),
+        "latency": result.latency.model_dump(),
+        "coordinate_system": result.coordinate_system.model_dump(),
+        "timestamp": result.timestamp,
+        "warnings": result.warnings,
+        "error": result.error,
+    }
+
+@app.get("/api/perception/status")
+def get_perception_status():
+    """Return perception engine readiness status."""
+    return perception_pipeline.get_status()
+
 @app.post("/api/perception/analyze")
 def analyze_page(req: AnalyzeRequest):
+    """Legacy perception endpoint — kept for backwards compatibility."""
     t_start = time.time()
     
     try:

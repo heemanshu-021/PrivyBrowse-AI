@@ -16,8 +16,13 @@ export const WorkspacePage: React.FC = () => {
     isProcessing,
     currentScenario,
     selectScenario,
-    scenarios
+    scenarios,
+    perceptionStatus,
+    metrics,
+    fusedElements
   } = useApp();
+
+  const interactiveCount = fusedElements.filter(e => e.type === 'BUTTON' || e.type === 'INPUT' || e.type === 'LINK' || e.type === 'CHECKBOX' || e.type === 'SELECT').length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -58,7 +63,15 @@ export const WorkspacePage: React.FC = () => {
             />
           </div>
 
-          <div style={{ alignSelf: 'flex-end' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', alignSelf: 'flex-end' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', marginRight: '4px' }}>
+              <span style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Perception State</span>
+              <StatusBadge
+                status={isProcessing || perceptionStatus === 'RUNNING' ? 'PROCESSING' : perceptionStatus === 'ERROR' ? 'ERROR' : fusedElements.length > 0 ? 'COMPLETED' : 'IDLE'}
+                variant={isProcessing || perceptionStatus === 'RUNNING' ? 'amber' : perceptionStatus === 'ERROR' ? 'red' : fusedElements.length > 0 ? 'green' : 'muted'}
+                dot
+              />
+            </div>
             <button
               className="btn btn-cyan"
               onClick={runPipeline}
@@ -70,6 +83,26 @@ export const WorkspacePage: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* Perception Quick Telemetry Summary Strip */}
+        {fusedElements.length > 0 && (
+          <div style={{ display: 'flex', gap: '16px', marginTop: '12px', paddingTop: '10px', borderTop: '1px solid var(--border-subtle)', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+              Detected Elements: <strong style={{ color: 'var(--accent-cyan)' }}>{fusedElements.length}</strong>
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+              Interactive Targets: <strong style={{ color: 'var(--accent-green)' }}>{interactiveCount}</strong>
+            </div>
+            {metrics.local_inference_time_ms > 0 && (
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                Perception Latency: <strong style={{ color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>{metrics.local_inference_time_ms.toFixed(1)}ms</strong>
+              </div>
+            )}
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+              Engine: <strong style={{ color: 'var(--text-secondary)' }}>OpenCV + Tesseract</strong>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 2. Three-Panel Grid: Browser Preview (Left) vs Agent Reasoning & Inspector (Right) */}

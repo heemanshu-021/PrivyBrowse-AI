@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrivyBrowse Unusual Layout Test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0b0f19; color: #e2e8f0; font-family: -apple-system, sans-serif; padding: 16px; display: flex; justify-content: center; }
+    .container { max-width: 480px; width: 100%; }
+    h1 { font-size: 15px; color: #00f2fe; text-align: center; margin-bottom: 4px; }
+    .subtitle { font-size: 10px; color: #64748b; text-align: center; margin-bottom: 16px; }
+
+    /* Diagonal layout */
+    .diagonal-row { display: flex; gap: 10px; margin-bottom: 10px; }
+    .diagonal-row:nth-child(odd) { padding-left: 40px; }
+    .diagonal-row:nth-child(even) { padding-right: 40px; }
+
+    .pill { display: inline-flex; align-items: center; padding: 6px 14px; border-radius: 20px; font-size: 11px; cursor: pointer; border: 1px solid; }
+    .pill-cyan { background: rgba(0,242,254,0.1); border-color: rgba(0,242,254,0.3); color: #00f2fe; }
+    .pill-green { background: rgba(34,197,94,0.1); border-color: rgba(34,197,94,0.3); color: #22c55e; }
+    .pill-amber { background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.3); color: #f59e0b; }
+    .pill-red { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); color: #ef4444; }
+
+    /* Circular buttons */
+    .circle-row { display: flex; gap: 12px; justify-content: center; margin: 16px 0; }
+    .circle-btn { width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; border: 2px solid #334155; background: #111827; }
+
+    /* Asymmetric columns */
+    .asym-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin: 12px 0; }
+    .card { background: #111827; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
+    .card-tall { grid-row: span 2; }
+    .card h3 { font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
+    .card p { font-size: 10px; color: #64748b; }
+
+    /* Floating action */
+    .fab { position: fixed; bottom: 20px; right: 20px; width: 44px; height: 44px; border-radius: 50%; background: linear-gradient(135deg, #00f2fe, #4facfe); color: #090d16; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 15px rgba(0,242,254,0.4); border: none; }
+
+    /* Range slider */
+    input[type="range"] { width: 100%; margin-top: 8px; accent-color: #00f2fe; }
+    .toggle { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #94a3b8; margin-top: 8px; }
+    .toggle input[type="checkbox"] { accent-color: #00f2fe; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Unusual Layout Test</h1>
+    <p class="subtitle">Tests perception on non-standard element shapes and positions</p>
+
+    <!-- Pill-shaped buttons in staggered rows -->
+    <div class="diagonal-row">
+      <span class="pill pill-cyan" id="pill-scan" onclick="alert('Scan')">🔍 Scan</span>
+      <span class="pill pill-green" id="pill-safe" onclick="alert('Safe')">✓ Safe</span>
+      <span class="pill pill-amber" id="pill-warn" onclick="alert('Warn')">⚠ Warning</span>
+    </div>
+    <div class="diagonal-row">
+      <span class="pill pill-red" id="pill-block" onclick="alert('Block')">✕ Block</span>
+      <span class="pill pill-cyan" id="pill-export" onclick="alert('Export')">📤 Export</span>
+    </div>
+
+    <!-- Circular icon buttons -->
+    <div class="circle-row">
+      <button class="circle-btn" id="btn-home" onclick="alert('Home')">🏠</button>
+      <button class="circle-btn" id="btn-search" onclick="alert('Search')">🔎</button>
+      <button class="circle-btn" id="btn-notif" onclick="alert('Notifications')">🔔</button>
+      <button class="circle-btn" id="btn-profile" onclick="alert('Profile')">👤</button>
+    </div>
+
+    <!-- Asymmetric card grid -->
+    <div class="asym-grid">
+      <div class="card card-tall">
+        <h3>System Health</h3>
+        <p>All perception modules operational. OCR engine running locally. No external API dependencies.</p>
+        <input type="range" id="slider-confidence" min="0" max="100" value="85">
+        <div style="font-size: 9px; color: #64748b; margin-top: 2px;">Confidence Threshold: 85%</div>
+      </div>
+      <div class="card">
+        <h3>Quick Toggle</h3>
+        <div class="toggle"><input type="checkbox" id="chk-auto-scan" checked> Auto-scan</div>
+        <div class="toggle"><input type="checkbox" id="chk-redact"> Auto-redact</div>
+      </div>
+      <div class="card">
+        <h3>Mode</h3>
+        <select id="sel-mode" style="width:100%; background:#0a0e17; border:1px solid #334155; color:#e2e8f0; border-radius:4px; padding:4px; font-size:10px;">
+          <option>Stealth</option>
+          <option>Standard</option>
+          <option>Verbose</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Action Button -->
+  <button class="fab" id="fab-add" onclick="alert('FAB clicked!')">+</button>
+</body>
+</html>

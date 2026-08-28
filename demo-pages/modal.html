@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrivyBrowse Modal Occlusion Test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0b0f19; color: #e2e8f0; font-family: -apple-system, sans-serif; padding: 20px; }
+    .container { max-width: 480px; margin: 0 auto; }
+    h1 { font-size: 16px; color: #00f2fe; margin-bottom: 12px; text-align: center; }
+    .form-group { margin-bottom: 10px; }
+    label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 3px; }
+    input { width: 100%; background: #0a0e17; border: 1px solid #334155; border-radius: 5px; padding: 8px 10px; color: #fff; font-size: 12px; }
+    .btn { padding: 8px 18px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; }
+    .btn-primary { background: #0284c7; color: white; width: 100%; margin-top: 8px; }
+    .btn-danger { background: #dc2626; color: white; }
+    .btn-secondary { background: #334155; color: #e2e8f0; }
+
+    /* Modal overlay */
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; }
+    .modal { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 20px; max-width: 360px; width: 90%; }
+    .modal h2 { font-size: 14px; color: #f87171; margin-bottom: 8px; }
+    .modal p { font-size: 11px; color: #94a3b8; margin-bottom: 14px; line-height: 1.5; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Account Settings</h1>
+    <p style="text-align:center; font-size:10px; color:#64748b; margin-bottom:14px;">
+      Synthetic page testing modal occlusion detection
+    </p>
+
+    <!-- Background form (partially occluded by modal) -->
+    <div class="form-group">
+      <label for="bg-name">Display Name</label>
+      <input type="text" id="bg-name" value="Test User" placeholder="Your name">
+    </div>
+    <div class="form-group">
+      <label for="bg-email">Email Address</label>
+      <input type="email" id="bg-email" value="test@example.com" placeholder="Email">
+    </div>
+    <button class="btn btn-primary" id="btn-save" onclick="alert('Saved!')">Save Changes</button>
+    <button class="btn btn-danger" id="btn-delete" style="width:100%; margin-top:8px;" onclick="document.getElementById('modal-overlay').classList.remove('hidden')">Delete Account</button>
+  </div>
+
+  <!-- Modal Overlay (occludes background elements) -->
+  <div class="overlay" id="modal-overlay">
+    <div class="modal">
+      <h2>⚠️ Confirm Account Deletion</h2>
+      <p>This action is irreversible. All your data, settings, and browsing history will be permanently deleted.</p>
+      <div class="form-group">
+        <label for="modal-confirm">Type "DELETE" to confirm:</label>
+        <input type="text" id="modal-confirm" placeholder="DELETE">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="btn-cancel" onclick="document.getElementById('modal-overlay').classList.add('hidden')">Cancel</button>
+        <button class="btn btn-danger" id="btn-confirm-delete" onclick="alert('Account deleted!')">Delete Forever</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

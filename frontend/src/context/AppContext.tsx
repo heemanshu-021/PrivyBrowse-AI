@@ -322,19 +322,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (backendConnected) {
       try {
-        // 2. PERCEIVE
+        // 2. PERCEIVE — Use new modular perception pipeline
         updateTimelineStep('PERCEIVE', 'RUNNING');
         const tPercStart = performance.now();
-        const analyzeRes = await fetch(`${BACKEND_URL}/perception/analyze`, {
+        const analyzeRes = await fetch(`${BACKEND_URL}/perception/full`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ screenshot: mockB64, dom_nodes: domNodes })
+          body: JSON.stringify({
+            screenshot: mockB64,
+            dom_nodes: domNodes,
+            viewport_width: 480,
+            viewport_height: 600,
+            device_pixel_ratio: 2.0,
+            page_metadata: { url: currentScenario.url, title: currentScenario.name }
+          })
         });
         const analyzeData = await analyzeRes.json();
         setFusedElements(analyzeData.fused_elements);
-        setOcrBlocks(analyzeData.ocr_blocks);
-        updateTimelineStep('PERCEIVE', 'SUCCESS', Math.round(performance.now() - tPercStart));
-        addLog('sys', `Contour extraction complete. Detected ${analyzeData.vision_elements.length} visual shapes.`);
+        setOcrBlocks(analyzeData.fused_elements.filter((e: any) => e.source === 'OCR' || e.source === 'TESSERACT'));
+        const percLatency = analyzeData.latency?.total_ms || Math.round(performance.now() - tPercStart);
+        updateTimelineStep('PERCEIVE', 'SUCCESS', Math.round(percLatency));
+        addLog('sys', `Perception pipeline complete. ${analyzeData.summary?.element_count || 0} elements fused (OCR: ${analyzeData.summary?.ocr_engine || 'N/A'}). Latency: ${percLatency}ms`);
 
         // 3. DETECT PII
         updateTimelineStep('DETECT', 'RUNNING');
