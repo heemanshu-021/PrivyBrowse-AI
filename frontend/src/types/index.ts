@@ -28,15 +28,55 @@ export interface DOMNode {
 
 export interface PiiEntity {
   id?: string;
-  type: 'EMAIL' | 'PHONE' | 'NAME' | 'PASSWORD' | 'ADDRESS' | 'CARD' | 'ID_NUM' | 'DOB' | 'FACE' | string;
+  type: 'EMAIL' | 'PHONE' | 'NAME' | 'PASSWORD' | 'ADDRESS' | 'CARD' | 'BANK_ACCOUNT' | 'AADHAAR' | 'PAN' | 'OTP' | 'SECRET_TOKEN' | 'ID_NUM' | 'DOB' | 'FACE' | string;
   text: string;
   confidence: number;
   bbox: [number, number, number, number];
-  source: 'OCR_REGEX' | 'DOM_SEMANTICS' | 'VISION_HAAR' | string;
+  source: 'OCR_REGEX' | 'DOM_SEMANTICS' | 'VISION_HAAR' | string | string[];
+  classification?: 'PUBLIC' | 'SENSITIVE' | 'HIGHLY_SENSITIVE';
   element_id?: string;
   timestamp?: string;
   protectionMethod?: RedactionStyle;
 }
+
+export interface RedactionItem {
+  id: string;
+  pii_type: string;
+  bbox: [number, number, number, number];
+  replacement: string;
+  confidence: number;
+  classification: string;
+  element_id?: string;
+}
+
+export interface RedactionMap {
+  redactions: RedactionItem[];
+  total_redacted: number;
+  highly_sensitive_count: number;
+  sensitive_count: number;
+  style: string;
+  timestamp: string;
+}
+
+export interface PrivacyAuditLogEntry {
+  id: string;
+  event: string;
+  type?: string;
+  classification?: string;
+  confidence?: number;
+  timestamp: string;
+  details?: Record<string, unknown>;
+}
+
+export interface PrivacyPolicy {
+  process_locally: boolean;
+  redact_pii: boolean;
+  allow_raw_remote_transmission: boolean;
+  allow_sanitized_remote_transmission: boolean;
+  min_confidence_threshold: number;
+  default_redaction_style: string;
+}
+
 
 export interface FusedElement {
   id: string;

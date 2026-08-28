@@ -12,6 +12,8 @@ from backend.perception.ocr_engine import OCREngine
 from backend.perception.fusion import ContextFuser
 from backend.privacy.pii_detector import PIIDetector
 from backend.privacy.redactor import Redactor
+from backend.privacy.privacy_gate import PrivacyGate
+from backend.privacy.schemas import PrivacyPolicy
 from backend.agent.planner import AgentPlanner
 from backend.actions.executor import ActionExecutor
 
@@ -42,6 +44,7 @@ ocr_engine = OCREngine()
 fuser = ContextFuser()
 pii_detector = PIIDetector()
 redactor = Redactor()
+privacy_gate = PrivacyGate()
 agent_planner = AgentPlanner()
 action_executor = ActionExecutor()
 
@@ -133,6 +136,20 @@ class FullPerceptionRequest(BaseModel):
     scroll_y: Optional[float] = 0.0
     document_width: Optional[float] = 0.0
     document_height: Optional[float] = 0.0
+
+class SanitizeRequest(BaseModel):
+    screenshot: str  # Base64 image
+    ocr_blocks: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    dom_nodes: Optional[List[DOMNodeSchema]] = Field(default_factory=list)
+    style: Optional[str] = "opaque"
+
+class PolicyUpdateRequest(BaseModel):
+    process_locally: Optional[bool] = None
+    redact_pii: Optional[bool] = None
+    allow_raw_remote_transmission: Optional[bool] = None
+    allow_sanitized_remote_transmission: Optional[bool] = None
+    min_confidence_threshold: Optional[float] = None
+    default_redaction_style: Optional[str] = None
 
 # --- API ENDPOINTS ---
 
@@ -279,32 +296,32 @@ def analyze_page(req: AnalyzeRequest):
 
 @app.post("/api/privacy/detect")
 def detect_privacy(req: DetectRequest):
-    t_start = time.time()
+    t_start = time.perf_counter()
     try:
         header, encoded = req.screenshot.split(",", 1) if "," in req.screenshot else ("", req.screenshot)
-        screenshot_bytes = base64.b64decode(encoded)
+        screenshot_bytes = base64.b64decode(encoded) if encoded else b""
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid screenshot encoding.")
 
     nodes_dict = [n.model_dump(by_alias=True) for n in req.dom_nodes]
     pii_entities = pii_detector.detect_all_pii(screenshot_bytes, req.text_blocks, nodes_dict)
 
-    t_pii = time.time() - t_start
-    metrics_store["last_pii_latency"] = t_pii
+    t_pii_ms = (time.perf_counter() - t_start) * 1000.0
+    metrics_store["last_pii_latency"] = t_pii_ms / 1000.0
     metrics_store["total_pii_detected"] += len(pii_entities)
 
     return {
         "pii_entities": pii_entities,
         "count": len(pii_entities),
-        "latency": t_pii
+        "latency_ms": round(t_pii_ms, 2)
     }
 
 @app.post("/api/privacy/redact")
 def redact_privacy(req: RedactRequest):
-    t_start = time.time()
+    t_start = time.perf_counter()
     try:
         header, encoded = req.screenshot.split(",", 1) if "," in req.screenshot else ("", req.screenshot)
-        screenshot_bytes = base64.b64decode(encoded)
+        screenshot_bytes = base64.b64decode(encoded) if encoded else b""
         image_header = header + "," if header else "data:image/png;base64,"
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid screenshot encoding.")
@@ -312,20 +329,96 @@ def redact_privacy(req: RedactRequest):
     pii_dict = [p.model_dump() for p in req.pii_entities]
     nodes_dict = [n.model_dump(by_alias=True) for n in req.dom_nodes]
 
-    redacted_bytes, redacted_nodes = redactor.redact(
-        screenshot_bytes, pii_dict, nodes_dict, redaction_style=req.style
+    redacted_bytes, redaction_map = redactor.redact_screenshot(
+        screenshot_bytes, pii_dict, redaction_style=req.style or "opaque"
     )
-    
-    redacted_b64 = image_header + base64.b64encode(redacted_bytes).decode("utf-8")
-    t_redact = time.time() - t_start
+    redacted_nodes = redactor.redact_dom_nodes(nodes_dict, pii_dict)
 
-    metrics_store["last_redaction_latency"] = t_redact
+    redacted_b64 = (image_header + base64.b64encode(redacted_bytes).decode("utf-8")) if redacted_bytes else ""
+    t_redact_ms = (time.perf_counter() - t_start) * 1000.0
+
+    metrics_store["last_redaction_latency"] = t_redact_ms / 1000.0
     metrics_store["total_pii_redacted"] += len(req.pii_entities)
 
     return {
         "redacted_screenshot": redacted_b64,
-        "redacted_dom_nodes": redacted_nodes
+        "redacted_dom_nodes": redacted_nodes,
+        "redaction_map": redaction_map.model_dump(),
+        "latency_ms": round(t_redact_ms, 2)
     }
+
+@app.post("/api/privacy/sanitize")
+def sanitize_privacy_gate(req: SanitizeRequest):
+    """
+    Unified Privacy Gate endpoint: Detects PII, executes visual/DOM/OCR redaction,
+    generates structured RedactionMap, and records privacy-safe audit logs.
+    """
+    t_start = time.perf_counter()
+    try:
+        header, encoded = req.screenshot.split(",", 1) if "," in req.screenshot else ("", req.screenshot)
+        screenshot_bytes = base64.b64decode(encoded) if encoded else b""
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid screenshot encoding.")
+
+    nodes_dict = [n.model_dump(by_alias=True) for n in req.dom_nodes] if req.dom_nodes else []
+
+    sanitized_context, pii_entities = privacy_gate.process_and_sanitize(
+        screenshot_bytes=screenshot_bytes,
+        ocr_blocks=req.ocr_blocks or [],
+        dom_nodes=nodes_dict,
+        style=req.style
+    )
+
+    t_total_ms = (time.perf_counter() - t_start) * 1000.0
+    metrics_store["last_pii_latency"] = privacy_gate.metrics["last_detection_latency_ms"] / 1000.0
+    metrics_store["last_redaction_latency"] = privacy_gate.metrics["last_redaction_latency_ms"] / 1000.0
+    metrics_store["total_pii_detected"] += len(pii_entities)
+    metrics_store["total_pii_redacted"] += sanitized_context.redaction_map.total_redacted
+
+    return {
+        "success": True,
+        "sanitized_context": sanitized_context.model_dump(),
+        "pii_entities": [e.to_safe_dict() for e in pii_entities],
+        "redaction_map": sanitized_context.redaction_map.model_dump(),
+        "latency_breakdown": {
+            "detection_ms": privacy_gate.metrics["last_detection_latency_ms"],
+            "redaction_ms": privacy_gate.metrics["last_redaction_latency_ms"],
+            "total_ms": round(t_total_ms, 2)
+        }
+    }
+
+@app.get("/api/privacy/policy")
+def get_privacy_policy():
+    """Returns active machine-readable privacy policy."""
+    return privacy_gate.policy.model_dump()
+
+@app.put("/api/privacy/policy")
+def update_privacy_policy(req: PolicyUpdateRequest):
+    """Updates machine-readable privacy policy settings."""
+    if req.process_locally is not None:
+        privacy_gate.policy.process_locally = req.process_locally
+    if req.redact_pii is not None:
+        privacy_gate.policy.redact_pii = req.redact_pii
+    if req.allow_raw_remote_transmission is not None:
+        privacy_gate.policy.allow_raw_remote_transmission = req.allow_raw_remote_transmission
+    if req.allow_sanitized_remote_transmission is not None:
+        privacy_gate.policy.allow_sanitized_remote_transmission = req.allow_sanitized_remote_transmission
+    if req.min_confidence_threshold is not None:
+        privacy_gate.policy.min_confidence_threshold = req.min_confidence_threshold
+    if req.default_redaction_style is not None:
+        privacy_gate.policy.default_redaction_style = req.default_redaction_style
+
+    return {"success": True, "policy": privacy_gate.policy.model_dump()}
+
+@app.get("/api/privacy/audit-logs")
+def get_privacy_audit_logs():
+    """Returns privacy-safe audit log stream."""
+    return [log.model_dump() for log in privacy_gate.audit_logs]
+
+@app.get("/api/privacy/status")
+def get_privacy_status():
+    """Returns real-time privacy shield status and metrics."""
+    return privacy_gate.get_status()
 
 @app.post("/api/agent/plan")
 def plan_agent_action(req: PlanRequest):

@@ -79,6 +79,19 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
     description: 'Demonstrates computer vision face detection via Haar Cascade on raw screenshots and employee ID number regex redaction.',
     expectedBehavior: 'Applies visual blur/mask over facial photo and saves profile.',
     riskLevel: 'HIGH'
+  },
+  {
+    id: 'privacy_eval',
+    number: '06',
+    name: 'Indian PII & False-Positive Evaluation',
+    subtitle: 'PAN, Aadhaar, Card, Password, OTP & Public Metric Preservations',
+    task: 'Evaluate on-device privacy gate on PAN, Aadhaar, Card, OTP, and false-positive numbers',
+    url: '/demo/privacy_eval.html',
+    piiTypes: ['PAN', 'AADHAAR', 'CARD', 'PASSWORD', 'OTP', 'EMAIL', 'PHONE'],
+    expectedElements: 8,
+    description: 'Comprehensive privacy benchmark demonstrating multi-signal detection of Indian PAN, Aadhaar, payment cards, OTPs, and strict preservation of non-PII metrics and years.',
+    expectedBehavior: 'Sanitizes all sensitive identifiers and retains public numbers intact.',
+    riskLevel: 'HIGH'
   }
 ];
 
@@ -442,6 +455,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         { id: 'p2', type: 'NAME', text: 'Johnathan Doe', confidence: 0.91, bbox: [20, 250, 460, 290], source: 'DOM_SEMANTICS', element_id: 'dom_0', protectionMethod: settings.redactionStyle },
         { id: 'p3', type: 'ID_NUM', text: '987-65-4321', confidence: 0.96, bbox: [20, 320, 460, 360], source: 'OCR_REGEX', element_id: 'dom_1', protectionMethod: settings.redactionStyle }
       ];
+    } else if (currentScenario.id === 'privacy_eval') {
+      detectedPii = [
+        { id: 'p1', type: 'PAN', text: 'ABCDE1234F', confidence: 0.98, bbox: [20, 110, 460, 150], source: ['OCR_REGEX', 'PATTERN', 'PAN_STRUCTURE'], element_id: 'dom_0', classification: 'HIGHLY_SENSITIVE', protectionMethod: settings.redactionStyle },
+        { id: 'p2', type: 'AADHAAR', text: '9876 5432 1098', confidence: 0.96, bbox: [20, 180, 460, 220], source: ['OCR_REGEX', 'PATTERN', 'AADHAAR_FORMAT'], element_id: 'dom_1', classification: 'HIGHLY_SENSITIVE', protectionMethod: settings.redactionStyle },
+        { id: 'p3', type: 'CARD', text: '4111 2222 3333 4444', confidence: 0.99, bbox: [20, 250, 460, 290], source: ['OCR_REGEX', 'PATTERN', 'LUHN_CHECKSUM_VALID'], element_id: 'dom_2', classification: 'HIGHLY_SENSITIVE', protectionMethod: settings.redactionStyle },
+        { id: 'p4', type: 'PASSWORD', text: 'SecretAdminKey!2026', confidence: 0.99, bbox: [20, 320, 230, 360], source: ['DOM_SEMANTICS', 'DOM_INPUT_PASSWORD'], element_id: 'dom_3', classification: 'HIGHLY_SENSITIVE', protectionMethod: settings.redactionStyle },
+        { id: 'p5', type: 'OTP', text: '593821', confidence: 0.95, bbox: [250, 320, 460, 360], source: ['OCR_REGEX', 'OTP_VERIFICATION_CONTEXT'], element_id: 'dom_4', classification: 'HIGHLY_SENSITIVE', protectionMethod: settings.redactionStyle },
+        { id: 'p6', type: 'EMAIL', text: 'support@sih2026.gov.in', confidence: 0.97, bbox: [20, 390, 230, 430], source: ['OCR_REGEX', 'PATTERN', 'DOM_SEMANTICS'], element_id: 'dom_5', classification: 'SENSITIVE', protectionMethod: settings.redactionStyle },
+        { id: 'p7', type: 'PHONE', text: '+91 98765 43210', confidence: 0.94, bbox: [250, 390, 460, 430], source: ['OCR_REGEX', 'PATTERN', 'INDIAN_MOBILE'], element_id: 'dom_6', classification: 'SENSITIVE', protectionMethod: settings.redactionStyle }
+      ];
     }
 
     setPiiEntities(detectedPii);
@@ -720,6 +743,18 @@ function getScenarioDOMNodes(scenarioId: string): DOMNode[] {
       { id: "dom_0", tag_name: "INPUT", type: "text", placeholder: "Search...", bbox: [20, 48, 380, 80], id_attr: "search-input" },
       { id: "dom_1", tag_name: "BUTTON", type: "button", text: "Search", bbox: [390, 48, 460, 80] },
       { id: "dom_2", tag_name: "A", text: "Chandrayaan-3 - Wikipedia", bbox: [20, 120, 460, 150] }
+    ];
+  }
+  if (scenarioId === 'privacy_eval') {
+    return [
+      { id: "dom_0", tag_name: "INPUT", type: "text", value: "ABCDE1234F", placeholder: "ABCDE1234F", bbox: [20, 110, 460, 150], id_attr: "pan-input" },
+      { id: "dom_1", tag_name: "INPUT", type: "text", value: "9876 5432 1098", placeholder: "9876 5432 1098", bbox: [20, 180, 460, 220], id_attr: "aadhaar-input" },
+      { id: "dom_2", tag_name: "INPUT", type: "text", value: "4111 2222 3333 4444", placeholder: "4111 2222 3333 4444", bbox: [20, 250, 460, 290], id_attr: "card-input" },
+      { id: "dom_3", tag_name: "INPUT", type: "password", value: "SecretAdminKey!2026", placeholder: "••••••••", bbox: [20, 320, 230, 360], id_attr: "password-input" },
+      { id: "dom_4", tag_name: "INPUT", type: "text", value: "593821", placeholder: "593821", bbox: [250, 320, 460, 360], id_attr: "otp-input" },
+      { id: "dom_5", tag_name: "INPUT", type: "email", value: "support@sih2026.gov.in", placeholder: "support@sih2026.gov.in", bbox: [20, 390, 230, 430], id_attr: "email-input" },
+      { id: "dom_6", tag_name: "INPUT", type: "tel", value: "+91 98765 43210", placeholder: "+91 98765 43210", bbox: [250, 390, 460, 430], id_attr: "phone-input" },
+      { id: "dom_7", tag_name: "BUTTON", type: "submit", text: "Validate Local Privacy Gate", bbox: [20, 460, 460, 500], id_attr: "btn-submit" }
     ];
   }
   return [];

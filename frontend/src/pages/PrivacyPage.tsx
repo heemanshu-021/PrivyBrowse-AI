@@ -169,6 +169,30 @@ export const PrivacyPage: React.FC = () => {
                     No personal data on public query page.
                   </div>
                 )}
+                {currentScenario.id === 'privacy_eval' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '10px' }}>Indian PAN:</span>
+                      <div style={{ color: '#f87171', fontFamily: 'var(--font-mono)' }}>ABCDE1234F</div>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '10px' }}>Indian Aadhaar:</span>
+                      <div style={{ color: '#f87171', fontFamily: 'var(--font-mono)' }}>9876 5432 1098</div>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '10px' }}>Payment Card:</span>
+                      <div style={{ color: '#f87171', fontFamily: 'var(--font-mono)' }}>4111 2222 3333 4444</div>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '10px' }}>Password & OTP:</span>
+                      <div style={{ color: '#f87171', fontFamily: 'var(--font-mono)' }}>SecretAdminKey!2026 / 593821</div>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '10px' }}>Non-PII Content (Public):</span>
+                      <div style={{ color: '#38bdf8', fontFamily: 'var(--font-mono)', fontSize: '11px' }}>2026, ₹999, Order #12345</div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -257,6 +281,30 @@ export const PrivacyPage: React.FC = () => {
                 {currentScenario.id === 'search' && (
                   <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                     Layout verified. No PII tokens required.
+                  </div>
+                )}
+                {currentScenario.id === 'privacy_eval' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '10px' }}>Indian PAN:</span>
+                      <div style={{ color: 'var(--accent-green)', fontFamily: 'var(--font-mono)' }}>[PAN REDACTED]</div>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '10px' }}>Indian Aadhaar:</span>
+                      <div style={{ color: 'var(--accent-green)', fontFamily: 'var(--font-mono)' }}>[AADHAAR REDACTED]</div>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '10px' }}>Payment Card:</span>
+                      <div style={{ color: 'var(--accent-green)', fontFamily: 'var(--font-mono)' }}>[CARD REDACTED]</div>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '10px' }}>Password & OTP:</span>
+                      <div style={{ color: 'var(--accent-green)', fontFamily: 'var(--font-mono)' }}>[PASSWORD REDACTED] / [OTP REDACTED]</div>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '10px' }}>Preserved Public Numbers:</span>
+                      <div style={{ color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)', fontSize: '11px' }}>2026, ₹999, Order #12345 (UNTOUCHED)</div>
+                    </div>
                   </div>
                 )}
               </div>
