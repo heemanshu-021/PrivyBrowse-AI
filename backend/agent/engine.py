@@ -33,8 +33,10 @@ class LocalRuleBasedEngine(BaseReasoningEngine):
     """
 
     def __init__(self):
+        from backend.security.injection_guard import InjectionGuard
         self.generator = CandidateGenerator()
         self.scorer = ActionScorer()
+        self.injection_guard = InjectionGuard()
 
     def plan_next_action(
         self,
@@ -44,16 +46,20 @@ class LocalRuleBasedEngine(BaseReasoningEngine):
         history: List[Dict[str, Any]] = None
     ) -> Optional[CandidateAction]:
         """
-        1. Generates candidate actions for active objective
-        2. Scores and ranks candidate actions
-        3. Returns the highest-scoring candidate
+        1. Neutralizes adversarial prompt injections from untrusted webpage text
+        2. Generates candidate actions for active objective
+        3. Scores and ranks candidate actions
+        4. Returns the highest-scoring candidate
         """
+        clean_elements, _ = self.injection_guard.sanitize_untrusted_elements(sanitized_elements)
+
         candidates = self.generator.generate_candidates(
             objective=objective,
-            fused_elements=sanitized_elements,
+            fused_elements=clean_elements,
             goal_text=task.goal,
             history=history
         )
+
 
         if not candidates:
             return None

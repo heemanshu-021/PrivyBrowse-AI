@@ -83,8 +83,9 @@ class ActionValidator:
             target_id = action_json.get("target_id") or action_json.get("element_id")
             recent_same = [
                 h for h in hist[-3:]
-                if h.get("action") == action_name and (h.get("targetId") == target_id or h.get("element_id") == target_id)
+                if h.get("action") == action_name and (h.get("target_id") == target_id or h.get("targetId") == target_id or h.get("element_id") == target_id)
             ]
+
             if len(recent_same) >= 3:
                 return ValidationResult(
                     allowed=False,
@@ -127,6 +128,25 @@ class ActionValidator:
                 reason=f"LOW_TARGET_CONFIDENCE: Confidence {conf:.2f} is below minimum threshold {self.min_confidence:.2f}",
                 risk_level=RiskLevel.MEDIUM
             )
+
+        # 4b. Target Element Visibility Check
+        target_id = action_json.get("target_id") or action_json.get("element_id")
+        if target_id and fused_elements:
+            matched_el = next((e for e in fused_elements if e.get("id") == target_id), None)
+            if matched_el:
+                vis = str(matched_el.get("visibility", "VISIBLE")).upper()
+                if vis in ("HIDDEN", "INVISIBLE", "OCCLUDED") or matched_el.get("visible") is False:
+                    return ValidationResult(
+                        allowed=False,
+                        reason=f"TARGET_IS_{vis}: Action cannot be performed on hidden/invisible element '{target_id}'",
+                        risk_level=RiskLevel.HIGH
+                    )
+                # Check for critical keywords in matched element
+                el_text = str(matched_el.get("text", "")).lower()
+                if any(w in el_text for w in ("delete", "destroy", "wipe", "format", "transfer", "pay", "authorize")):
+                    action_json["risk_level"] = RiskLevel.CRITICAL
+                    action_json["requires_confirmation"] = True
+
 
         # 5. Financial / Confirmation Policy Check
         risk = action_json.get("risk_level", RiskLevel.LOW)

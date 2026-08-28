@@ -611,8 +611,58 @@ def get_realtime_metrics():
         "total_pii_redacted": metrics_store["total_pii_redacted"]
     }
 
+# Security System Instances
+from backend.security.audit_logger import SecurityAuditLogger
+from backend.security.injection_guard import InjectionGuard
+from backend.security.secret_scanner import SecretScanner
+security_logger = SecurityAuditLogger()
+injection_guard = InjectionGuard()
+secret_scanner = SecretScanner()
+
+
+class PromptScanRequest(BaseModel):
+    text: str
+
+@app.post("/api/security/scan-prompt")
+def scan_prompt_injection(req: PromptScanRequest):
+    """Scans a candidate string for adversarial prompt injections and jailbreaks."""
+    res = injection_guard.scan_text(req.text)
+    if res.has_injection:
+        security_logger.log_event(
+            event_type="PROMPT_INJECTION_DETECTED",
+            threat_level=res.threat_level.value,
+            description=f"Prompt injection pattern detected: {res.matched_patterns}",
+            mitigation_action="NEUTRALIZED_TEXT"
+        )
+    return res.model_dump()
+
+@app.get("/api/security/audit")
+def get_security_audit():
+    """Returns security audit event log and event counts."""
+    return {
+        "total_events": security_logger.get_total_events(),
+        "event_counts": security_logger.get_event_count_by_type(),
+        "events": [e.model_dump() for e in security_logger.get_events(50)],
+        "security_status": "ACTIVE",
+        "trust_boundary_enforced": True
+    }
+
+@app.post("/api/security/scan-secrets")
+def scan_repository_secrets():
+    """Runs on-device static secret scanner across repository files."""
+    scan_res = secret_scanner.scan_directory(".")
+    if not scan_res.clean:
+        security_logger.log_event(
+            event_type="SECRET_LEAK_DETECTED",
+            threat_level="HIGH_RISK",
+            description=f"Local scanner found {scan_res.secrets_found_count} potential credential patterns",
+            mitigation_action="ALERT_TRIGGERED"
+        )
+    return scan_res.model_dump()
+
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True)
+
 

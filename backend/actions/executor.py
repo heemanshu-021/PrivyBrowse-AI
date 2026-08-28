@@ -310,8 +310,9 @@ class ActionExecutor:
         """Executes a URL navigation action with strict protocol filtering."""
         target_url = str(action_json.get("url", "")).strip()
 
-        # Block dangerous schemes (javascript:, data:, vbscript:)
-        if any(target_url.lower().startswith(b) for b in ["javascript:", "data:", "vbscript:"]):
+        from backend.security.navigation_guard import NavigationGuard
+        is_safe, err_code, err_msg = NavigationGuard.validate_url(target_url)
+        if not is_safe:
             return ActionResult(
                 success=False,
                 action_id=action_id,
@@ -319,8 +320,9 @@ class ActionExecutor:
                 duration_ms=round((time.perf_counter() - t_start) * 1000.0, 2),
                 timestamp=datetime.now(timezone.utc).isoformat(),
                 status=ExecutionStatus.BLOCKED,
-                error=ActionError(code="UNSAFE_URL_SCHEME", message="Navigation to javascript: or data: URLs is forbidden for security")
+                error=ActionError(code=err_code or "UNSAFE_URL_SCHEME", message=err_msg or "Navigation blocked for security")
             )
+
 
         time.sleep(0.040)  # 40ms navigation initiation
         dur = round((time.perf_counter() - t_start) * 1000.0, 2)
