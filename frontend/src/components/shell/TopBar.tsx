@@ -80,7 +80,17 @@ export const TopBar: React.FC = () => {
           <span>🧪</span>
           <span>Demo Lab</span>
         </button>
+
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={() => setActivePage('judge')}
+          style={{ backgroundColor: 'var(--accent-amber)', color: '#04101e', fontWeight: 700 }}
+        >
+          <span>⚖️</span>
+          <span>Judge Mode</span>
+        </button>
       </div>
     </header>
+
   );
 };

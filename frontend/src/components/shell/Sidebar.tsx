@@ -19,9 +19,11 @@ const PRIMARY_NAV: NavItemDef[] = [
 ];
 
 const SECONDARY_NAV: NavItemDef[] = [
+  { id: 'judge', label: 'Judge Mode', icon: '⚖️', badge: 'SIH26171' },
   { id: 'demolab', label: 'Demo Lab', icon: '🧪', badge: '5 LABS' },
   { id: 'settings', label: 'Settings', icon: '⚙️' }
 ];
+
 
 export const Sidebar: React.FC = () => {
   const {

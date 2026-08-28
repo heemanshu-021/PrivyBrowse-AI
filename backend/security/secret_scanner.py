@@ -58,9 +58,10 @@ class SecretScanner:
                     try:
                         with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
                             for line_no, line in enumerate(f, 1):
-                                # Skip test mock strings or documentation samples
-                                if "test" in fpath.lower() or "docs" in fpath.lower() or "demo" in fpath.lower():
+                                # Skip test mock strings, synthetic benchmarks, or documentation samples
+                                if any(k in fpath.lower() for k in ("test", "docs", "demo", "benchmark")):
                                     continue
+
 
                                 for pattern_name, regex in self.SECRET_PATTERNS:
                                     match = regex.search(line)

@@ -6,7 +6,9 @@ export type PageId =
   | 'activity'
   | 'performance'
   | 'demolab'
+  | 'judge'
   | 'settings';
+
 
 export type ViewMode = 'original' | 'perception' | 'sanitized' | 'overlay';
 export type RedactionStyle = 'opaque' | 'blur' | 'pixelate';
