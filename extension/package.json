@@ -1,0 +1,11 @@
+{
+  "name": "privybrowse-extension",
+  "version": "1.0.0",
+  "description": "PrivyBrowse AI - Manifest V3 Chrome Extension",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.2"
+  }
+}

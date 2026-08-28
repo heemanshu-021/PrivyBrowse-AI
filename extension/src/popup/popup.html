@@ -8,6 +8,7 @@
 </head>
 <body>
   <div class="popup-container">
+    <!-- Header -->
     <div class="popup-header">
       <div class="brand">
         <div class="brand-badge">🛡️</div>
@@ -18,6 +19,7 @@
       </div>
     </div>
 
+    <!-- Status Section -->
     <div class="status-card">
       <div class="status-row">
         <span class="status-label">Local Engine:</span>
@@ -29,8 +31,10 @@
       </div>
     </div>
 
+    <!-- Feedback Message Box -->
     <div id="status-message" class="status-message hidden"></div>
 
+    <!-- Action Buttons -->
     <div class="action-section">
       <button id="btn-analyze" class="btn btn-cyan">
         <span class="btn-icon">⚡</span>
@@ -38,7 +42,7 @@
       </button>
 
       <div class="agent-controls-row">
-        <button id="btn-start" class="btn btn-primary btn-sm">▶ Start</button>
+        <button id="btn-start" class="btn btn-primary btn-sm">▶ Start Agent</button>
         <button id="btn-pause" class="btn btn-secondary btn-sm">⏸ Pause</button>
         <button id="btn-stop" class="btn btn-secondary btn-sm">⏹ Stop</button>
       </div>
@@ -48,6 +52,7 @@
       </button>
     </div>
 
+    <!-- Footer Trust Badge -->
     <div class="popup-footer">
       <div class="trust-indicator">
         <span class="trust-dot"></span>
@@ -56,6 +61,6 @@
     </div>
   </div>
 
-  <script src="popup.js"></script>
+  <script type="module" src="popup.js"></script>
 </body>
 </html>

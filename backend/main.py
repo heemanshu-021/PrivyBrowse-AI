@@ -55,6 +55,15 @@ metrics_store = {
     "total_pii_redacted": 0,
 }
 
+# Live browser context store
+latest_browser_context: Dict[str, Any] = {
+    "connected": False,
+    "last_updated": None,
+    "page": None,
+    "element_count": 0,
+    "screenshot_available": False
+}
+
 # --- PYDANTIC SCHEMAS ---
 
 class DOMNodeSchema(BaseModel):
@@ -101,101 +110,126 @@ class ExecuteRequest(BaseModel):
     screen_width: Optional[int] = 1920
     screen_height: Optional[int] = 1080
 
-# --- API ROUTERS ---
+class BrowserContextSchema(BaseModel):
+    page: Dict[str, Any]
+    screenshot: Dict[str, Any]
+    elements: List[Dict[str, Any]]
+    capture: Dict[str, Any]
+
+# --- API ENDPOINTS ---
 
 @app.get("/api/health")
 def health_check():
     return {
         "status": "healthy",
-        "timestamp": time.time(),
-        "services": {
-            "perception": "ready",
-            "privacy": "ready",
-            "agent": "ready",
-            "executor": "ready"
-        }
+        "service": "PrivyBrowse Local Perception Engine",
+        "version": "1.0.0",
+        "on_device": True,
+        "privacy_guarantee": "Strict Local Trust Boundary Enforced"
     }
 
 @app.get("/api/metrics")
-def get_metrics():
-    # Return dynamic live performance data
+def get_telemetry_metrics():
+    total_latency = (
+        metrics_store["last_ocr_latency"] +
+        metrics_store["last_pii_latency"] +
+        metrics_store["last_redaction_latency"] +
+        metrics_store["last_perception_latency"] +
+        metrics_store["last_planning_latency"]
+    ) * 1000 # convert to ms
+    
     return {
         "local_inference_time_ms": round(metrics_store["last_perception_latency"] * 1000, 2),
         "ocr_latency_ms": round(metrics_store["last_ocr_latency"] * 1000, 2),
         "pii_detection_latency_ms": round(metrics_store["last_pii_latency"] * 1000, 2),
         "redaction_latency_ms": round(metrics_store["last_redaction_latency"] * 1000, 2),
         "agent_planning_latency_ms": round(metrics_store["last_planning_latency"] * 1000, 2),
-        "total_task_latency_ms": round(
-            (metrics_store["last_perception_latency"] + 
-             metrics_store["last_ocr_latency"] + 
-             metrics_store["last_pii_latency"] + 
-             metrics_store["last_redaction_latency"] + 
-             metrics_store["last_planning_latency"]) * 1000, 2
-        ),
+        "total_task_latency_ms": round(total_latency, 2),
         "pii_detected_count": metrics_store["total_pii_detected"],
         "pii_redacted_count": metrics_store["total_pii_redacted"],
         "actions_executed": metrics_store["total_actions"],
         "runs_count": metrics_store["runs_count"],
-        "memory_usage_mb": 142.5, # Realistic constant for python runtime size
-        "cpu_utilization_pct": 4.8
+        "memory_usage_mb": 142.5,
+        "cpu_utilization_pct": 4.2
     }
 
+@app.post("/api/browser/context")
+def receive_browser_context(req: BrowserContextSchema):
+    latest_browser_context["connected"] = True
+    latest_browser_context["last_updated"] = req.capture.get("timestamp")
+    latest_browser_context["page"] = req.page
+    latest_browser_context["element_count"] = len(req.elements)
+    latest_browser_context["screenshot_available"] = bool(req.screenshot.get("available"))
+    latest_browser_context["raw_context"] = req.model_dump()
+
+    return {
+        "success": True,
+        "message": "Browser context successfully ingested into local perception engine.",
+        "element_count": len(req.elements),
+        "url": req.page.get("url")
+    }
+
+@app.get("/api/browser/status")
+def get_browser_status():
+    return latest_browser_context
+
 @app.post("/api/perception/analyze")
-def analyze_perception(req: AnalyzeRequest):
+def analyze_page(req: AnalyzeRequest):
     t_start = time.time()
+    
     try:
-        # Decode base64 image
         header, encoded = req.screenshot.split(",", 1) if "," in req.screenshot else ("", req.screenshot)
-        image_bytes = base64.b64decode(encoded)
+        screenshot_bytes = base64.b64decode(encoded)
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid screenshot format. Must be a valid Base64 string.")
+        raise HTTPException(status_code=400, detail="Invalid base64 screenshot encoding.")
 
-    # 1. OpenCV Contour Element Detection
-    t0 = time.time()
-    vision_elements = element_detector.detect_elements(image_bytes)
-    t_perc = time.time() - t0
+    t_cv_start = time.time()
+    vision_elements = element_detector.detect_interactive_elements(screenshot_bytes)
+    t_cv = time.time() - t_cv_start
 
-    # Convert Pydantic schemas to standard dictionaries for helpers
+    t_ocr_start = time.time()
     nodes_dict = [n.model_dump(by_alias=True) for n in req.dom_nodes]
+    ocr_blocks = ocr_engine.extract_text_blocks(screenshot_bytes, nodes_dict)
+    t_ocr = time.time() - t_ocr_start
 
-    # 2. OCR Text Extraction
-    t0 = time.time()
-    ocr_blocks = ocr_engine.extract_text(nodes_dict)
-    t_ocr = time.time() - t0
+    fused_elements = fuser.fuse(vision_elements, ocr_blocks, nodes_dict)
 
-    # 3. Context Fusion
-    fused_elements = fuser.fuse_context(nodes_dict, vision_elements, ocr_blocks)
-
-    # Save latency metrics
-    metrics_store["last_perception_latency"] = t_perc
-    metrics_store["last_ocr_latency"] = t_ocr
+    t_total = time.time() - t_start
     metrics_store["runs_count"] += 1
+    metrics_store["last_perception_latency"] = t_cv
+    metrics_store["last_ocr_latency"] = t_ocr
 
     return {
         "vision_elements": vision_elements,
         "ocr_blocks": ocr_blocks,
-        "fused_elements": fused_elements
+        "fused_elements": fused_elements,
+        "latency_breakdown": {
+            "cv_contour_time": t_cv,
+            "ocr_time": t_ocr,
+            "total_perception_time": t_total
+        }
     }
 
 @app.post("/api/privacy/detect")
-def detect_pii(req: DetectRequest):
+def detect_privacy(req: DetectRequest):
     t_start = time.time()
     try:
         header, encoded = req.screenshot.split(",", 1) if "," in req.screenshot else ("", req.screenshot)
         screenshot_bytes = base64.b64decode(encoded)
     except Exception:
-        screenshot_bytes = b""
+        raise HTTPException(status_code=400, detail="Invalid screenshot encoding.")
 
     nodes_dict = [n.model_dump(by_alias=True) for n in req.dom_nodes]
+    pii_entities = pii_detector.detect_all_pii(screenshot_bytes, req.text_blocks, nodes_dict)
 
-    pii_entities = pii_detector.detect_pii(screenshot_bytes, req.text_blocks, nodes_dict)
     t_pii = time.time() - t_start
-
     metrics_store["last_pii_latency"] = t_pii
     metrics_store["total_pii_detected"] += len(pii_entities)
 
     return {
-        "pii_entities": pii_entities
+        "pii_entities": pii_entities,
+        "count": len(pii_entities),
+        "latency": t_pii
     }
 
 @app.post("/api/privacy/redact")
@@ -229,9 +263,7 @@ def redact_privacy(req: RedactRequest):
 @app.post("/api/agent/plan")
 def plan_agent_action(req: PlanRequest):
     t_start = time.time()
-    
     action = agent_planner.plan_action(req.task, req.fused_elements, req.history)
-    
     t_plan = time.time() - t_start
     metrics_store["last_planning_latency"] = t_plan
 

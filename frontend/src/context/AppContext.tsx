@@ -175,7 +175,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activePage, setActivePage] = useState<PageId>('overview');
   const [backendConnected, setBackendConnected] = useState<boolean>(false);
-  const [extensionConnected] = useState<boolean>(false);
+  const [extensionConnected, setExtensionConnected] = useState<boolean>(false);
   const [agentStatus, setAgentStatus] = useState<'READY' | 'RUNNING' | 'PAUSED' | 'ERROR'>('READY');
   const [perceptionStatus, setPerceptionStatus] = useState<'READY' | 'RUNNING' | 'ERROR'>('READY');
   const [privacyStatus, setPrivacyStatus] = useState<'PROTECTED' | 'WARNING' | 'ERROR'>('PROTECTED');
@@ -249,6 +249,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (mRes.ok) {
           const mData = await mRes.json();
           setMetrics(mData);
+        }
+
+        // Fetch extension / browser status
+        try {
+          const bRes = await fetch(`${BACKEND_URL}/browser/status`);
+          if (bRes.ok) {
+            const bData = await bRes.json();
+            if (bData.connected) {
+              setExtensionConnected(true);
+              addLog('sys', `Browser extension synced with active tab: ${bData.page?.hostname || 'active tab'}`);
+            }
+          }
+        } catch {
+          // Extension status not yet available
         }
       } else {
         setBackendConnected(false);

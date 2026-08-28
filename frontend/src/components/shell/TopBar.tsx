@@ -5,6 +5,7 @@ import { StatusBadge } from '../common/StatusBadge';
 export const TopBar: React.FC = () => {
   const {
     backendConnected,
+    extensionConnected,
     privacyStatus,
     currentScenario,
     setActivePage,
@@ -32,8 +33,8 @@ export const TopBar: React.FC = () => {
             dot
           />
           <StatusBadge
-            status={backendConnected ? 'BROWSER CONNECTED' : 'STANDALONE SANDBOX'}
-            variant={backendConnected ? 'green' : 'muted'}
+            status={extensionConnected ? 'BROWSER CONNECTED' : backendConnected ? 'DAEMON READY' : 'STANDALONE SANDBOX'}
+            variant={extensionConnected ? 'green' : backendConnected ? 'cyan' : 'muted'}
             dot
           />
           <StatusBadge
