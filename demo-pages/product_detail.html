@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PrivyBrowse — Pragyan Lunar Rover Specifications</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --accent: #38bdf8;
+      --accent-green: #10b981;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: #1e293b;
+    }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .hero {
+      background-color: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin: 20px 0;
+    }
+    .spec-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      background-color: var(--card-bg);
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .spec-table th, .spec-table td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .spec-table th {
+      background-color: rgba(56, 189, 248, 0.08);
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .btn-action {
+      background-color: var(--accent);
+      color: #04101e;
+      font-weight: 700;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      text-decoration: none;
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="/demo/product_listing.html" style="color: var(--accent); text-decoration: none; font-size: 13px;">← Back to Hardware Catalog</a>
+    <span style="font-size: 12px; color: var(--text-muted);">Payload ID: PRAGYAN-03-ISRO</span>
+  </div>
+
+  <div class="hero">
+    <h1 style="margin: 0 0 10px 0; font-size: 22px;">Pragyan Lunar Rover Module</h1>
+    <p style="color: var(--text-muted); font-size: 13px; margin: 0;">
+      Autonomous 26-kilogram lunar surface rover designed and built by ISRO for the Chandrayaan-3 mission.
+      Operated successfully on the lunar south pole region at 69.37°S, 32.35°E.
+    </p>
+  </div>
+
+  <div style="height: 300px; padding: 20px 0; color: var(--text-muted); font-size: 13px;">
+    <h3>Overview & Mission Architecture</h3>
+    <p>
+      The rover chassis employs a rocker-bogie suspension system with six independently driven wheels. Solar arrays deliver up to 50 watts of electrical power.
+      Scroll down to inspect detailed telemetry specifications.
+    </p>
+  </div>
+
+  <!-- Target Section for Scroll Demo -->
+  <div id="specifications-section">
+    <h2 style="color: var(--accent); font-size: 18px; margin-bottom: 12px;">Technical Specifications & Metrics</h2>
+    <table class="spec-table">
+      <thead>
+        <tr>
+          <th>Parameter</th>
+          <th>Specification Metric</th>
+          <th>Verification Standard</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Mass / Payload Capacity</td>
+          <td>26.0 kg</td>
+          <td>Flight Model Qualified</td>
+        </tr>
+        <tr>
+          <td>Communication Link</td>
+          <td>Rover-to-Lander Direct RF Link</td>
+          <td>S-Band Telemetry</td>
+        </tr>
+        <tr>
+          <td>Mission Duration</td>
+          <td>1 Lunar Day (14 Earth Days)</td>
+          <td>Operational Success Verified</td>
+        </tr>
+        <tr>
+          <td>Scientific Instruments</td>
+          <td>APXS (Alpha Particle X-Ray) + LIBS Laser Spectrometer</td>
+          <td>In-situ Elemental Profiling</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div style="margin-top: 20px; display: flex; gap: 12px;">
+      <a href="/demo/payment_sim.html" class="btn-action" id="btn-order-hardware">Proceed to Procurement Simulator</a>
+    </div>
+  </div>
+</body>
+</html>

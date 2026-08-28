@@ -47,6 +47,8 @@ redactor = Redactor()
 privacy_gate = PrivacyGate()
 agent_planner = AgentPlanner()
 action_executor = ActionExecutor()
+from backend.actions.agent_runner import EndToEndAgentRunner
+agent_runner = EndToEndAgentRunner(planner=agent_planner, executor=action_executor)
 
 # New modular perception pipeline
 perception_pipeline = PerceptionPipeline()
@@ -534,6 +536,28 @@ def execute_agent_action(req: ExecuteRequest):
         "message": message,
         "metadata": metadata
     }
+
+class RunTurnRequest(BaseModel):
+    sanitized_elements: List[Dict[str, Any]]
+    current_url: Optional[str] = ""
+    task_goal: Optional[str] = ""
+    user_confirmed: Optional[bool] = False
+    history: Optional[List[Dict[str, Any]]] = None
+
+@app.post("/api/agent/run-turn")
+def run_agent_turn(req: RunTurnRequest):
+    """Executes a complete single multi-turn iteration: Plan -> Validate -> Execute -> Verify."""
+    turn_result = agent_runner.run_single_turn(
+        sanitized_elements=req.sanitized_elements,
+        current_url=req.current_url or "",
+        task_goal=req.task_goal or "",
+        user_confirmed=bool(req.user_confirmed),
+        history=req.history or []
+    )
+    if turn_result.get("status") == "SUCCESS":
+        metrics_store["total_actions"] += 1
+    return turn_result
+
 
 if __name__ == "__main__":
     import uvicorn

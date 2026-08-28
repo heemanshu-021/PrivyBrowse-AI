@@ -18,8 +18,8 @@ class ActionValidator:
 
     def __init__(self, min_confidence: float = 0.50):
         self.valid_actions = {
-            "CLICK", "TYPE", "SCROLL", "PRESS_KEY",
-            "NAVIGATE", "WAIT", "GO_BACK", "GO_FORWARD", "FINISH"
+            "CLICK", "TYPE", "SCROLL", "SCROLL_UP", "SCROLL_DOWN",
+            "PRESS_KEY", "NAVIGATE", "WAIT", "GO_BACK", "GO_FORWARD", "FINISH"
         }
         self.min_confidence = min_confidence
 
@@ -56,7 +56,12 @@ class ActionValidator:
         if not isinstance(action_json, dict):
             return ValidationResult(allowed=False, reason="ACTION_MUST_BE_JSON_OBJECT")
 
-        action_name = action_json.get("action")
+        raw_act = action_json.get("action")
+        if hasattr(raw_act, "value"):
+            action_name = raw_act.value
+        else:
+            action_name = str(raw_act).split(".")[-1] if raw_act else None
+
         if not action_name or action_name not in self.valid_actions:
             return ValidationResult(
                 allowed=False,

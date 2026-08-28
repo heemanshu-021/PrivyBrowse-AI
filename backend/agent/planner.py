@@ -77,7 +77,8 @@ class AgentPlanner:
         self,
         sanitized_elements: List[Dict[str, Any]],
         history: List[Dict[str, Any]] = None,
-        task_goal: Optional[str] = None
+        task_goal: Optional[str] = None,
+        user_confirmed: bool = False
     ) -> Tuple[Optional[CandidateAction], ValidationResult, AgentState]:
         """
         Executes a single reasoning iteration of the agent planning loop:
@@ -137,13 +138,17 @@ class AgentPlanner:
             self.state_machine.transition_to(AgentState.VALIDATING, "Validating action constraints")
             task.status = AgentState.VALIDATING
 
+        cand_dict = selected_candidate.model_dump()
+        cand_dict["confirmed_by_user"] = user_confirmed
+
         validation = self.validator.validate_candidate(
-            action_json=selected_candidate.model_dump(),
+            action_json=cand_dict,
             fused_elements=sanitized_elements,
             constraints=task.constraints,
             actions_executed_so_far=task.actions_executed,
             history=hist
         )
+
         t_val_ms = (time.perf_counter() - t_val_start) * 1000.0
         self.metrics["last_validation_latency_ms"] = round(t_val_ms, 2)
 
