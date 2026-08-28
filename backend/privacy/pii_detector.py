@@ -155,7 +155,7 @@ class PIIDetector:
             # (B) Credit / Debit Card Match
             for match_str, _, _, is_luhn in matches_card(text):
                 # False positive check
-                is_fp, reason = is_false_positive_number(match_str, global_context)
+                is_fp, reason = is_false_positive_number(match_str, text)
                 if is_fp and not is_luhn:
                     continue
 
@@ -197,7 +197,7 @@ class PIIDetector:
 
             # (D) Indian Aadhaar Number Match
             for match_str, _, _ in matches_aadhaar(text):
-                is_fp, _ = is_false_positive_number(match_str, global_context)
+                is_fp, _ = is_false_positive_number(match_str, text)
                 if is_fp:
                     continue
 
@@ -218,9 +218,10 @@ class PIIDetector:
 
             # (E) Phone Number Match
             for match_str, _, _ in matches_phone(text):
-                is_fp, _ = is_false_positive_number(match_str, global_context)
+                is_fp, _ = is_false_positive_number(match_str, text)
                 if is_fp:
                     continue
+
 
                 conf, signals = boost_confidence_with_context(0.90, "PHONE", text)
                 detected_entities.append(PIIEntity(

@@ -195,6 +195,7 @@ export interface PerformanceMetrics {
   pii_detection_latency_ms: number;
   redaction_latency_ms: number;
   agent_planning_latency_ms: number;
+  perception_pipeline_latency_ms?: number;
   total_task_latency_ms: number;
   pii_detected_count: number;
   pii_redacted_count: number;
@@ -204,6 +205,7 @@ export interface PerformanceMetrics {
   cpu_utilization_pct: number;
   historicalLatencies?: { timestamp: string; latency: number; type: string }[];
 }
+
 
 export interface DemoScenario {
   id: string;

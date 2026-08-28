@@ -558,7 +558,61 @@ def run_agent_turn(req: RunTurnRequest):
         metrics_store["total_actions"] += 1
     return turn_result
 
+# Benchmark Harness Instance
+from backend.performance.benchmarks import BenchmarkRunner
+benchmark_runner = BenchmarkRunner(
+    perception_pipeline=perception_pipeline,
+    privacy_gate=privacy_gate,
+    agent_planner=agent_planner,
+    action_executor=action_executor
+)
+latest_benchmark_results = None
+
+@app.post("/api/benchmark/run")
+def run_system_benchmarks():
+    """Runs full automated benchmark evaluation across Perception, PII, and Agent Tasks."""
+    global latest_benchmark_results
+    results = benchmark_runner.run_all_benchmarks()
+    latest_benchmark_results = results
+    return {
+        "success": True,
+        "results": results.model_dump()
+    }
+
+@app.get("/api/benchmark/results")
+def get_benchmark_results():
+    """Returns latest benchmark evaluation report or runs default evaluation if empty."""
+    global latest_benchmark_results
+    if latest_benchmark_results is None:
+        latest_benchmark_results = benchmark_runner.run_all_benchmarks()
+    return latest_benchmark_results.model_dump()
+
+@app.get("/api/benchmark/export")
+def export_benchmark_results():
+    """Exports benchmark evaluation as downloadable JSON file."""
+    global latest_benchmark_results
+    if latest_benchmark_results is None:
+        latest_benchmark_results = benchmark_runner.run_all_benchmarks()
+    filepath = benchmark_runner.export_results_json(latest_benchmark_results)
+    return FileResponse(
+        path=filepath,
+        filename="benchmark-results.json",
+        media_type="application/json"
+    )
+
+@app.get("/api/metrics/realtime")
+def get_realtime_metrics():
+    """Returns real-time aggregated latency distributions (Avg, Median, P95, Min, Max)."""
+    return {
+        "distributions": benchmark_runner.tracker.get_all_distributions(),
+        "memory_rss_mb": benchmark_runner.tracker.get_memory_usage_mb(),
+        "total_actions": metrics_store["total_actions"],
+        "total_pii_detected": metrics_store["total_pii_detected"],
+        "total_pii_redacted": metrics_store["total_pii_redacted"]
+    }
+
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True)
+
