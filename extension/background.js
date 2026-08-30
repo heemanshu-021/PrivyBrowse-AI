@@ -11,6 +11,10 @@ const RESTRICTED_PREFIXES = [
   "https://chromewebstore.google.com"
 ];
 
+// Action polling state
+let pollingIntervalId = null;
+const POLL_INTERVAL_MS = 500;
+
 function isRestrictedUrl(url) {
   if (!url) return true;
   return RESTRICTED_PREFIXES.some(prefix => url.startsWith(prefix));
@@ -18,7 +22,11 @@ function isRestrictedUrl(url) {
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log("[PrivyBrowse AI] Service Worker successfully installed.");
+  startPolling();
 });
+
+// Also start polling when the service worker wakes up
+startPolling();
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "CONNECTION_STATUS") {
@@ -47,6 +55,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .then(result => sendResponse({ success: true, result }))
       .catch(err => sendResponse({ success: false, error: err.message }));
     return true;
+  }
+
+  if (message.type === "START_POLLING") {
+    startPolling();
+    sendResponse({ success: true, message: "Polling started" });
+    return false;
+  }
+
+  if (message.type === "STOP_POLLING") {
+    stopPolling();
+    sendResponse({ success: true, message: "Polling stopped" });
+    return false;
   }
 });
 
@@ -164,4 +184,171 @@ async function dispatchAction(actionPayload) {
     type: "EXECUTE_ACTION",
     payload: actionPayload
   });
+}
+
+// --- BROWSER ACTION BRIDGE POLLING ---
+
+/**
+ * Polls the backend for pending actions and dispatches them to the active tab's content script.
+ * This is the core communication loop for the real browser action execution bridge.
+ *
+ * Flow:
+ *   1. GET /api/action/pending → retrieve next queued action
+ *   2. Forward action to content.js via chrome.tabs.sendMessage
+ *   3. POST /api/action/ack → report execution result back to backend
+ */
+async function pollPendingActions() {
+  try {
+    const response = await fetch(`${DEFAULT_BACKEND_URL}/action/pending`, {
+      method: "GET",
+      headers: { "Accept": "application/json" }
+    });
+
+    if (!response.ok) {
+      return; // Backend unavailable, skip this poll cycle
+    }
+
+    const data = await response.json();
+
+    if (!data.has_action || !data.action) {
+      return; // No pending actions
+    }
+
+    const action = data.action;
+    const actionId = action.action_id;
+    const actionType = action.action_type;
+
+    console.log(`[PrivyBrowse Bridge] Received action: ${actionType} (${actionId})`);
+
+    // Get active tab for execution
+    let tab;
+    try {
+      tab = await getActiveTab();
+    } catch (tabErr) {
+      // No valid tab available — report failure
+      await postAcknowledgement(actionId, {
+        success: false,
+        action_type: actionType,
+        error: tabErr.message,
+        error_code: "NO_ACTIVE_TAB"
+      });
+      return;
+    }
+
+    // Build the payload for content.js executeSafeAction()
+    const contentPayload = {
+      action: actionType,
+      action_id: actionId,
+      target: {
+        elementId: action.target_id,
+        x: action.target?.x,
+        y: action.target?.y,
+        description: action.description,
+        selector: action.metadata?.selector
+      },
+      text: action.text,
+      key: action.key,
+      scrollDelta: action.scroll_delta
+    };
+
+    // Send to content script
+    let result;
+    try {
+      result = await chrome.tabs.sendMessage(tab.id, {
+        type: "EXECUTE_ACTION",
+        payload: contentPayload
+      });
+    } catch (msgErr) {
+      // Content script not loaded — try injecting it first
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ["content.js"]
+        });
+        result = await chrome.tabs.sendMessage(tab.id, {
+          type: "EXECUTE_ACTION",
+          payload: contentPayload
+        });
+      } catch (retryErr) {
+        await postAcknowledgement(actionId, {
+          success: false,
+          action_type: actionType,
+          error: `Content script unavailable: ${retryErr.message}`,
+          error_code: "CONTENT_SCRIPT_UNAVAILABLE"
+        });
+        return;
+      }
+    }
+
+    // Post acknowledgement back to backend
+    const ackPayload = {
+      action_id: actionId,
+      success: result?.success || result?.result?.success || false,
+      action_type: actionType,
+      target_id: action.target_id,
+      error: result?.error || result?.result?.error || null,
+      error_code: result?.result?.error || null,
+      execution_timestamp: new Date().toISOString(),
+      detail: result?.result?.detail || result?.detail || null,
+      metadata: result?.result || result || {}
+    };
+
+    await postAcknowledgement(actionId, ackPayload);
+
+    console.log(`[PrivyBrowse Bridge] Action ${actionId} completed: ${ackPayload.success ? 'SUCCESS' : 'FAILED'}`);
+
+  } catch (err) {
+    // Silently handle polling errors (backend offline, network issues)
+    // The bridge will naturally recover on the next poll cycle
+    console.debug("[PrivyBrowse Bridge] Poll cycle error:", err.message);
+  }
+}
+
+/**
+ * Posts an action acknowledgement to the backend bridge.
+ */
+async function postAcknowledgement(actionId, payload) {
+  try {
+    const body = {
+      action_id: actionId,
+      success: payload.success,
+      action_type: payload.action_type || null,
+      target_id: payload.target_id || null,
+      error: payload.error || null,
+      error_code: payload.error_code || null,
+      execution_timestamp: payload.execution_timestamp || new Date().toISOString(),
+      detail: payload.detail || null,
+      metadata: payload.metadata || {}
+    };
+
+    await fetch(`${DEFAULT_BACKEND_URL}/action/ack`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  } catch (ackErr) {
+    console.warn(`[PrivyBrowse Bridge] Failed to post ack for ${actionId}:`, ackErr.message);
+  }
+}
+
+/**
+ * Starts the action polling loop.
+ */
+function startPolling() {
+  if (pollingIntervalId !== null) {
+    return; // Already polling
+  }
+  pollingIntervalId = setInterval(pollPendingActions, POLL_INTERVAL_MS);
+  console.log("[PrivyBrowse Bridge] Action polling started (every " + POLL_INTERVAL_MS + "ms)");
+}
+
+/**
+ * Stops the action polling loop.
+ */
+function stopPolling() {
+  if (pollingIntervalId !== null) {
+    clearInterval(pollingIntervalId);
+    pollingIntervalId = null;
+    console.log("[PrivyBrowse Bridge] Action polling stopped");
+  }
 }

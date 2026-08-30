@@ -1,6 +1,8 @@
 import time
 import base64
+from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -16,6 +18,7 @@ from backend.privacy.privacy_gate import PrivacyGate
 from backend.privacy.schemas import PrivacyPolicy
 from backend.agent.planner import AgentPlanner
 from backend.actions.executor import ActionExecutor
+from backend.actions.browser_bridge import BrowserActionBridge, ActionAcknowledgement
 
 # Import new modular perception pipeline
 from backend.perception.core.pipeline import PerceptionPipeline
@@ -46,7 +49,8 @@ pii_detector = PIIDetector()
 redactor = Redactor()
 privacy_gate = PrivacyGate()
 agent_planner = AgentPlanner()
-action_executor = ActionExecutor()
+browser_bridge = BrowserActionBridge()
+action_executor = ActionExecutor(bridge=browser_bridge)
 from backend.actions.agent_runner import EndToEndAgentRunner
 agent_runner = EndToEndAgentRunner(planner=agent_planner, executor=action_executor)
 
@@ -536,6 +540,54 @@ def execute_agent_action(req: ExecuteRequest):
         "message": message,
         "metadata": metadata
     }
+
+# --- BROWSER ACTION BRIDGE ENDPOINTS ---
+
+@app.get("/api/action/pending")
+def get_pending_action():
+    """Extension polls this endpoint to retrieve the next queued action for real browser execution."""
+    action = browser_bridge.get_pending_action()
+    if action:
+        return {
+            "action": action.model_dump(),
+            "has_action": True
+        }
+    return {"action": None, "has_action": False}
+
+class ActionAckRequest(BaseModel):
+    action_id: str
+    success: bool
+    action_type: Optional[str] = None
+    target_id: Optional[str] = None
+    error: Optional[str] = None
+    error_code: Optional[str] = None
+    execution_timestamp: Optional[str] = None
+    detail: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+@app.post("/api/action/ack")
+def acknowledge_action(req: ActionAckRequest):
+    """Extension posts action execution results here after content script completes."""
+    ack = ActionAcknowledgement(
+        action_id=req.action_id,
+        success=req.success,
+        action_type=req.action_type,
+        target_id=req.target_id,
+        error=req.error,
+        error_code=req.error_code,
+        execution_timestamp=req.execution_timestamp or datetime.now(timezone.utc).isoformat(),
+        detail=req.detail,
+        metadata=req.metadata or {}
+    )
+    found = browser_bridge.acknowledge_action(ack)
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Action '{req.action_id}' not found in pending queue")
+    return {"success": True, "action_id": req.action_id}
+
+@app.get("/api/extension/status")
+def get_extension_status():
+    """Returns Chrome extension connectivity status based on heartbeat tracking."""
+    return browser_bridge.get_status()
 
 class RunTurnRequest(BaseModel):
     sanitized_elements: List[Dict[str, Any]]

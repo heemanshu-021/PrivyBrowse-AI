@@ -174,37 +174,57 @@ function resolveElement(target) {
 }
 
 async function executeSafeAction(request) {
-  const { action, target, text, key, scrollDelta } = request;
+  const { action, action_id, target, text, key, scrollDelta } = request;
   const timestamp = new Date().toISOString();
+
+  // Helper to include action_id in all responses
+  function makeResult(result) {
+    if (action_id) result.action_id = action_id;
+    return result;
+  }
 
   if (action === 'WAIT') {
     await new Promise(r => setTimeout(r, 800));
-    return { success: true, action: 'WAIT', detail: 'Completed wait duration (800ms)', timestamp };
+    return makeResult({ success: true, action: 'WAIT', detail: 'Completed wait duration (800ms)', timestamp });
   }
 
   if (action === 'SCROLL') {
     const dx = scrollDelta?.x || 0;
     const dy = scrollDelta?.y || 400;
+    const scrollYBefore = window.scrollY;
+    const scrollXBefore = window.scrollX;
     window.scrollBy({ top: dy, left: dx, behavior: 'smooth' });
-    return { success: true, action: 'SCROLL', detail: `Scrolled viewport by (${dx}, ${dy}) px`, timestamp };
+    // Wait for scroll stabilization
+    await new Promise(r => setTimeout(r, 150));
+    const actualDeltaY = window.scrollY - scrollYBefore;
+    const actualDeltaX = window.scrollX - scrollXBefore;
+    return makeResult({
+      success: true,
+      action: 'SCROLL',
+      detail: `Scrolled viewport by (${actualDeltaX}, ${actualDeltaY}) px (requested: ${dx}, ${dy})`,
+      actual_delta: { x: actualDeltaX, y: actualDeltaY },
+      requested_delta: { x: dx, y: dy },
+      scroll_position: { x: window.scrollX, y: window.scrollY },
+      timestamp
+    });
   }
 
   if (action === 'NAVIGATE' && text) {
     window.location.href = text;
-    return { success: true, action: 'NAVIGATE', detail: `Navigating to ${text}`, timestamp };
+    return makeResult({ success: true, action: 'NAVIGATE', detail: `Navigating to ${text}`, timestamp });
   }
 
-  const targetElement = resolveElement(target);
+  const targetElement = resolveElement(target || {});
   if (!targetElement) {
-    return { success: false, action, error: 'TARGET_NOT_FOUND', detail: 'Could not resolve target element on current page layout.', timestamp };
+    return makeResult({ success: false, action, error: 'TARGET_NOT_FOUND', detail: 'Could not resolve target element on current page layout.', timestamp });
   }
 
   if (!isElementVisible(targetElement)) {
-    return { success: false, action, error: 'TARGET_NOT_VISIBLE', detail: `Target element <${targetElement.tagName.toLowerCase()}> is hidden or outside the viewport.`, timestamp };
+    return makeResult({ success: false, action, error: 'TARGET_NOT_VISIBLE', detail: `Target element <${targetElement.tagName.toLowerCase()}> is hidden or outside the viewport.`, timestamp });
   }
 
   if (targetElement.disabled) {
-    return { success: false, action, error: 'TARGET_DISABLED', detail: 'Target element is currently in a disabled state.', timestamp };
+    return makeResult({ success: false, action, error: 'TARGET_DISABLED', detail: 'Target element is currently in a disabled state.', timestamp });
   }
 
   if (action === 'CLICK') {
@@ -222,30 +242,74 @@ async function executeSafeAction(request) {
       if (form) form.requestSubmit ? form.requestSubmit() : form.submit();
     }
 
-    return { success: true, action: 'CLICK', target: target.elementId || targetElement.tagName.toLowerCase(), detail: `Dispatched click event on <${targetElement.tagName.toLowerCase()}>`, timestamp };
+    return makeResult({
+      success: true,
+      action: 'CLICK',
+      target: target?.elementId || targetElement.dataset?.pbId || targetElement.tagName.toLowerCase(),
+      element_pb_id: targetElement.dataset?.pbId || null,
+      detail: `Dispatched click event on <${targetElement.tagName.toLowerCase()}>`,
+      bbox: { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) },
+      timestamp
+    });
   }
 
   if (action === 'TYPE') {
     if (!(targetElement instanceof HTMLInputElement) && !(targetElement instanceof HTMLTextAreaElement) && !targetElement.isContentEditable) {
-      return { success: false, action: 'TYPE', error: 'INVALID_ACTION', detail: `Element <${targetElement.tagName.toLowerCase()}> does not accept text input.`, timestamp };
+      return makeResult({ success: false, action: 'TYPE', error: 'INVALID_ACTION', detail: `Element <${targetElement.tagName.toLowerCase()}> does not accept text input.`, timestamp });
     }
     const isSensitive = isSensitiveField(targetElement);
     targetElement.focus();
     const valueToSet = text || '';
+
     if (targetElement instanceof HTMLInputElement || targetElement instanceof HTMLTextAreaElement) {
-      targetElement.value = valueToSet;
+      // Use native prototype setter for React/Vue/Angular controlled input compatibility
+      const proto = targetElement instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
+      const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      if (nativeSetter) {
+        nativeSetter.call(targetElement, valueToSet);
+      } else {
+        targetElement.value = valueToSet;
+      }
+      // Dispatch React-compatible synthetic events
+      targetElement.dispatchEvent(new Event('input', { bubbles: true }));
+      targetElement.dispatchEvent(new Event('change', { bubbles: true }));
     } else if (targetElement.isContentEditable) {
       targetElement.innerText = valueToSet;
+      targetElement.dispatchEvent(new Event('input', { bubbles: true }));
+      targetElement.dispatchEvent(new Event('change', { bubbles: true }));
     }
-    targetElement.dispatchEvent(new Event('input', { bubbles: true }));
-    targetElement.dispatchEvent(new Event('change', { bubbles: true }));
-    return {
+
+    // Verify the value was actually applied
+    let verifiedValue;
+    if (targetElement instanceof HTMLInputElement || targetElement instanceof HTMLTextAreaElement) {
+      verifiedValue = targetElement.value;
+    } else {
+      verifiedValue = targetElement.innerText;
+    }
+    const valueApplied = verifiedValue === valueToSet;
+
+    if (!valueApplied) {
+      return makeResult({
+        success: false,
+        action: 'TYPE',
+        error: 'VALUE_NOT_APPLIED',
+        detail: `Typed value was not retained by <${targetElement.tagName.toLowerCase()}> (framework may have overridden)`,
+        timestamp
+      });
+    }
+
+    return makeResult({
       success: true,
       action: 'TYPE',
-      target: target.elementId || targetElement.tagName.toLowerCase(),
+      target: target?.elementId || targetElement.dataset?.pbId || targetElement.tagName.toLowerCase(),
+      element_pb_id: targetElement.dataset?.pbId || null,
       detail: isSensitive ? `Typed [SENSITIVE VALUE MASKED] into <${targetElement.tagName.toLowerCase()}>` : `Typed "${valueToSet}" into <${targetElement.tagName.toLowerCase()}>`,
+      typed_value: isSensitive ? '[REDACTED]' : valueToSet,
+      value_verified: true,
       timestamp
-    };
+    });
   }
 
   if (action === 'PRESS_KEY') {
@@ -254,10 +318,17 @@ async function executeSafeAction(request) {
     targetElement.dispatchEvent(new KeyboardEvent('keydown', { key: keyString, bubbles: true }));
     targetElement.dispatchEvent(new KeyboardEvent('keypress', { key: keyString, bubbles: true }));
     targetElement.dispatchEvent(new KeyboardEvent('keyup', { key: keyString, bubbles: true }));
-    return { success: true, action: 'PRESS_KEY', target: target.elementId || targetElement.tagName.toLowerCase(), detail: `Dispatched keydown "${keyString}" on <${targetElement.tagName.toLowerCase()}>`, timestamp };
+    return makeResult({
+      success: true,
+      action: 'PRESS_KEY',
+      target: target?.elementId || targetElement.dataset?.pbId || targetElement.tagName.toLowerCase(),
+      element_pb_id: targetElement.dataset?.pbId || null,
+      detail: `Dispatched keydown "${keyString}" on <${targetElement.tagName.toLowerCase()}>`,
+      timestamp
+    });
   }
 
-  return { success: false, action, error: 'INVALID_ACTION', detail: `Action verb ${action} is not supported.`, timestamp };
+  return makeResult({ success: false, action, error: 'INVALID_ACTION', detail: `Action verb ${action} is not supported.`, timestamp });
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

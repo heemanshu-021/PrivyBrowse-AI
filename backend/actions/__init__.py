@@ -10,6 +10,7 @@ from backend.actions.schemas import (
 from backend.actions.page_change_detector import PageChangeDetector
 from backend.actions.executor import ActionExecutor
 from backend.actions.agent_runner import EndToEndAgentRunner
+from backend.actions.browser_bridge import BrowserActionBridge
 
 __all__ = [
     "ExecutionStatus",
@@ -20,5 +21,6 @@ __all__ = [
     "ExecutionConfig",
     "PageChangeDetector",
     "ActionExecutor",
-    "EndToEndAgentRunner"
+    "EndToEndAgentRunner",
+    "BrowserActionBridge"
 ]

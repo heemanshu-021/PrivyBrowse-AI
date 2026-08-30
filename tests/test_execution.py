@@ -6,14 +6,15 @@ Tests:
   - SCROLL execution (SCROLL_UP, SCROLL_DOWN) with delta tracking
   - PRESS_KEY execution with permitted key whitelist enforcement
   - NAVIGATE execution with dangerous protocol blocking (javascript:, data:)
-  - WAIT bounded execution
   - Page Change Detection (URL, DOM mutation, scroll offsets)
   - End-to-End Multi-turn Agent Runner with budget, loop, and confirmation guardrails
+  - Browser Action Bridge: dispatch, ack, timeout, extension unavailable, lifecycle
 """
 
 import sys
 import os
 import time
+import threading
 
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -24,13 +25,20 @@ from backend.actions.schemas import (
 from backend.actions.executor import ActionExecutor
 from backend.actions.page_change_detector import PageChangeDetector
 from backend.actions.agent_runner import EndToEndAgentRunner
+from backend.actions.browser_bridge import (
+    BrowserActionBridge, PendingAction, ActionAcknowledgement, ActionBridgeResult
+)
 from backend.agent.planner import AgentPlanner
 from backend.agent.schemas import AgentState
 
 
+# ============================================================
+# EXISTING TESTS (updated for simulation_mode=True)
+# ============================================================
+
 def test_click_and_stale_target_handling():
     print("[TEST 1] Testing CLICK Execution & Stale Element Rejection...")
-    executor = ActionExecutor()
+    executor = ActionExecutor(simulation_mode=True)
 
     mock_elements = [
         {"id": "btn-search", "type": "BUTTON", "bbox": [100, 50, 200, 90], "confidence": 0.95, "visibility": "VISIBLE"},
@@ -66,7 +74,7 @@ def test_click_and_stale_target_handling():
 
 def test_type_execution_and_zero_leak():
     print("\n[TEST 2] Testing TYPE Execution & Zero-Leak Privacy Guarantees...")
-    executor = ActionExecutor()
+    executor = ActionExecutor(simulation_mode=True)
 
     # 1. Public typing
     public_type = {
@@ -101,7 +109,7 @@ def test_type_execution_and_zero_leak():
 
 def test_scroll_execution():
     print("\n[TEST 3] Testing Controlled SCROLL Execution...")
-    executor = ActionExecutor()
+    executor = ActionExecutor(simulation_mode=True)
 
     # 1. Scroll down
     res_down = executor.execute_browser_action({"action": "SCROLL_DOWN", "amount": 450})
@@ -121,7 +129,7 @@ def test_scroll_execution():
 
 def test_keyboard_press_and_safety_filtering():
     print("\n[TEST 4] Testing Keyboard Actions & Safe Key Whitelist...")
-    executor = ActionExecutor()
+    executor = ActionExecutor(simulation_mode=True)
 
     # 1. Permitted key (Enter)
     res_enter = executor.execute_browser_action({"action": "PRESS_KEY", "key": "Enter"})
@@ -142,7 +150,7 @@ def test_keyboard_press_and_safety_filtering():
 
 def test_navigation_and_dangerous_scheme_blocking():
     print("\n[TEST 5] Testing Navigation & Protocol Security...")
-    executor = ActionExecutor()
+    executor = ActionExecutor(simulation_mode=True)
 
     # 1. Valid local demo navigation
     res_valid = executor.execute_browser_action({"action": "NAVIGATE", "url": "/demo/product_detail.html"}, current_url="/demo/product_listing.html")
@@ -195,7 +203,7 @@ def test_page_change_detector():
 def test_end_to_end_agent_runner_loop():
     print("\n[TEST 7] Testing End-to-End Multi-Turn Agent Runner...")
     planner = AgentPlanner()
-    executor = ActionExecutor()
+    executor = ActionExecutor(simulation_mode=True)
     runner = EndToEndAgentRunner(planner=planner, executor=executor)
 
     mock_elements = [
@@ -238,7 +246,7 @@ def test_end_to_end_agent_runner_loop():
 def test_high_risk_payment_confirmation_gate():
     print("\n[TEST 8] Testing High-Risk Financial Action Human Confirmation Gate...")
     planner = AgentPlanner()
-    executor = ActionExecutor()
+    executor = ActionExecutor(simulation_mode=True)
     runner = EndToEndAgentRunner(planner=planner, executor=executor)
 
     payment_elements = [
@@ -266,10 +274,337 @@ def test_high_risk_payment_confirmation_gate():
     print("  ✓ Financial action blocked by default and authorized only after explicit human confirmation.")
 
 
+# ============================================================
+# NEW BROWSER ACTION BRIDGE TESTS
+# ============================================================
+
+def test_bridge_action_dispatch_and_ack():
+    """Test full bridge lifecycle: dispatch → ack → result."""
+    print("\n[TEST 9] Testing Bridge Action Dispatch & Acknowledgement...")
+    bridge = BrowserActionBridge()
+    # Simulate extension connectivity
+    bridge.register_heartbeat()
+
+    action = PendingAction(
+        action_id="test-001",
+        action_type="CLICK",
+        target_id="btn-search",
+        target={"x": 150, "y": 70, "elementId": "btn-search"}
+    )
+    bridge.dispatch_action(action)
+
+    # Simulate extension picking up and acknowledging in background thread
+    def simulate_extension():
+        time.sleep(0.05)  # Small delay to simulate network
+        pending = bridge.get_pending_action()
+        assert pending is not None
+        assert pending.action_id == "test-001"
+        assert pending.status == "DISPATCHED"
+
+        ack = ActionAcknowledgement(
+            action_id="test-001",
+            success=True,
+            action_type="CLICK",
+            target_id="btn-search",
+            detail="Dispatched click event on <button>",
+            execution_timestamp="2026-08-30T12:00:00Z"
+        )
+        bridge.acknowledge_action(ack)
+
+    t = threading.Thread(target=simulate_extension)
+    t.start()
+
+    result = bridge.wait_for_result("test-001", timeout_ms=2000)
+    t.join()
+
+    assert result.success is True
+    assert result.status == "SUCCESS"
+    assert result.action_type == "CLICK"
+    assert result.target_id == "btn-search"
+
+    print("  ✓ Bridge dispatch → ack → result lifecycle verified.")
+
+
+def test_bridge_timeout_handling():
+    """Test that bridge times out correctly when no ack arrives."""
+    print("\n[TEST 10] Testing Bridge Timeout Handling...")
+    bridge = BrowserActionBridge()
+    bridge.register_heartbeat()
+
+    action = PendingAction(
+        action_id="test-timeout-001",
+        action_type="CLICK",
+        target_id="btn-missing",
+        timeout_ms=300
+    )
+    bridge.dispatch_action(action)
+
+    # No ack arrives — should timeout
+    result = bridge.wait_for_result("test-timeout-001", timeout_ms=300)
+    assert result.success is False
+    assert result.status == "TIMEOUT"
+    assert result.error_code == "EXTENSION_TIMEOUT"
+
+    print("  ✓ Bridge correctly times out when no acknowledgement received.")
+
+
+def test_bridge_extension_unavailable():
+    """Test executor fails fast when extension is not connected."""
+    print("\n[TEST 11] Testing Extension Unavailable Detection...")
+    bridge = BrowserActionBridge()
+    # Do NOT register heartbeat — extension not connected
+    executor = ActionExecutor(bridge=bridge, simulation_mode=False)
+
+    res = executor.execute_browser_action({
+        "action": "CLICK",
+        "target": {"x": 100, "y": 50},
+        "target_id": "btn-test",
+        "confidence": 0.95
+    })
+
+    assert res.success is False
+    assert res.status == ExecutionStatus.EXTENSION_UNAVAILABLE
+    assert res.error.code == "EXTENSION_UNAVAILABLE"
+
+    print("  ✓ Executor correctly fails fast when extension is not connected.")
+
+
+def test_bridge_failed_ack():
+    """Test that failed ack from extension propagates correct error."""
+    print("\n[TEST 12] Testing Bridge Failed Acknowledgement...")
+    bridge = BrowserActionBridge()
+    bridge.register_heartbeat()
+
+    action = PendingAction(
+        action_id="test-fail-001",
+        action_type="TYPE",
+        target_id="input-missing"
+    )
+    bridge.dispatch_action(action)
+
+    # Simulate failed ack
+    def simulate_failure():
+        time.sleep(0.05)
+        bridge.get_pending_action()  # Mark as dispatched
+        ack = ActionAcknowledgement(
+            action_id="test-fail-001",
+            success=False,
+            error="Could not resolve target element on current page layout.",
+            error_code="TARGET_NOT_FOUND"
+        )
+        bridge.acknowledge_action(ack)
+
+    t = threading.Thread(target=simulate_failure)
+    t.start()
+
+    result = bridge.wait_for_result("test-fail-001", timeout_ms=2000)
+    t.join()
+
+    assert result.success is False
+    assert result.status == "FAILED"
+    assert result.error_code == "TARGET_NOT_FOUND"
+
+    print("  ✓ Bridge correctly propagates failure from extension content script.")
+
+
+def test_bridge_stale_target_still_caught():
+    """Test stale target is still caught BEFORE bridge dispatch."""
+    print("\n[TEST 13] Testing Stale Target Rejection Before Bridge...")
+    bridge = BrowserActionBridge()
+    bridge.register_heartbeat()
+    executor = ActionExecutor(bridge=bridge, simulation_mode=False)
+
+    mock_elements = [
+        {"id": "btn-real", "type": "BUTTON", "bbox": [100, 50, 200, 90], "confidence": 0.95, "visibility": "VISIBLE"}
+    ]
+
+    res = executor.execute_browser_action(
+        {"action": "CLICK", "target": {"x": 150, "y": 70}, "target_id": "btn-stale-deleted", "confidence": 0.95},
+        current_elements=mock_elements
+    )
+    assert res.success is False
+    assert res.status == ExecutionStatus.STALE_TARGET
+    assert res.error.code == "TARGET_NOT_FOUND"
+
+    print("  ✓ Stale target still caught before bridge dispatch.")
+
+
+def test_bridge_validator_rejection():
+    """Test ActionValidator still blocks invalid actions before bridge."""
+    print("\n[TEST 14] Testing Validator Rejection Before Bridge...")
+    bridge = BrowserActionBridge()
+    bridge.register_heartbeat()
+    executor = ActionExecutor(bridge=bridge, simulation_mode=False)
+
+    # Out of bounds coordinates
+    res = executor.execute_browser_action({
+        "action": "CLICK",
+        "target": {"x": 9999, "y": 9999},
+        "confidence": 0.95
+    })
+    assert res.success is False
+    assert res.status == ExecutionStatus.BLOCKED
+    assert "OUT_OF_BOUNDS" in res.error.code or "OUT_OF_BOUNDS" in res.error.message
+
+    print("  ✓ ActionValidator still blocks invalid actions before bridge dispatch.")
+
+
+def test_bridge_high_risk_confirmation():
+    """Test high-risk actions still require confirmation before bridge dispatch."""
+    print("\n[TEST 15] Testing High-Risk Confirmation Before Bridge...")
+    bridge = BrowserActionBridge()
+    bridge.register_heartbeat()
+    executor = ActionExecutor(bridge=bridge, simulation_mode=False)
+
+    payment_elements = [
+        {"id": "btn-pay", "type": "BUTTON", "text": "Authorize & Submit Payment ₹1,450,000", "attributes": {}, "bbox": [50, 400, 400, 440], "confidence": 0.95, "visibility": "VISIBLE"}
+    ]
+
+    planner = AgentPlanner()
+    runner = EndToEndAgentRunner(planner=planner, executor=executor)
+
+    step = runner.run_single_turn(
+        sanitized_elements=payment_elements,
+        current_url="/demo/payment_sim.html",
+        task_goal="Fill out checkout form and pay order",
+        user_confirmed=False
+    )
+    assert step["status"] == "REQUIRES_CONFIRMATION"
+
+    print("  ✓ High-risk confirmation still enforced before bridge dispatch.")
+
+
+def test_bridge_click_dispatch_format():
+    """Test CLICK action is correctly formatted for the bridge."""
+    print("\n[TEST 16] Testing Bridge CLICK Dispatch Format...")
+    bridge = BrowserActionBridge()
+    bridge.register_heartbeat()
+
+    action = PendingAction(
+        action_id="fmt-click-001",
+        action_type="CLICK",
+        target_id="btn-search",
+        target={"x": 150.0, "y": 70.0, "elementId": "btn-search"}
+    )
+    bridge.dispatch_action(action)
+
+    pending = bridge.get_pending_action()
+    assert pending is not None
+    assert pending.action_type == "CLICK"
+    assert pending.target_id == "btn-search"
+    assert pending.target["x"] == 150.0
+
+    # Clean up
+    bridge.cancel_action("fmt-click-001")
+    print("  ✓ CLICK action correctly formatted for extension dispatch.")
+
+
+def test_bridge_type_dispatch_format():
+    """Test TYPE action is correctly formatted with text payload."""
+    print("\n[TEST 17] Testing Bridge TYPE Dispatch Format...")
+    bridge = BrowserActionBridge()
+    bridge.register_heartbeat()
+
+    action = PendingAction(
+        action_id="fmt-type-001",
+        action_type="TYPE",
+        target_id="search-input",
+        target={"x": 50, "y": 70, "elementId": "search-input"},
+        text="Chandrayaan-3"
+    )
+    bridge.dispatch_action(action)
+
+    pending = bridge.get_pending_action()
+    assert pending is not None
+    assert pending.action_type == "TYPE"
+    assert pending.text == "Chandrayaan-3"
+    assert pending.target_id == "search-input"
+
+    bridge.cancel_action("fmt-type-001")
+    print("  ✓ TYPE action correctly formatted with text payload for extension dispatch.")
+
+
+def test_bridge_scroll_dispatch_format():
+    """Test SCROLL action is correctly formatted with direction/delta."""
+    print("\n[TEST 18] Testing Bridge SCROLL Dispatch Format...")
+    bridge = BrowserActionBridge()
+    bridge.register_heartbeat()
+
+    action = PendingAction(
+        action_id="fmt-scroll-001",
+        action_type="SCROLL",
+        scroll_delta={"x": 0, "y": 400}
+    )
+    bridge.dispatch_action(action)
+
+    pending = bridge.get_pending_action()
+    assert pending is not None
+    assert pending.action_type == "SCROLL"
+    assert pending.scroll_delta["y"] == 400
+
+    bridge.cancel_action("fmt-scroll-001")
+    print("  ✓ SCROLL action correctly formatted with scroll delta for extension dispatch.")
+
+
+def test_bridge_pending_and_ack_lifecycle():
+    """Test full lifecycle: pending → dispatched → ack → result cleared."""
+    print("\n[TEST 19] Testing Bridge Full Lifecycle State Transitions...")
+    bridge = BrowserActionBridge()
+    bridge.register_heartbeat()
+
+    # Step 1: Dispatch
+    action = PendingAction(action_id="lifecycle-001", action_type="CLICK", target_id="btn-x")
+    bridge.dispatch_action(action)
+
+    status = bridge.get_status()
+    assert status["pending_actions"] == 1
+
+    # Step 2: Extension picks up
+    pending = bridge.get_pending_action()
+    assert pending.status == "DISPATCHED"
+
+    status2 = bridge.get_status()
+    assert status2["dispatched_actions"] == 1
+    assert status2["pending_actions"] == 0
+
+    # Step 3: Ack
+    ack = ActionAcknowledgement(action_id="lifecycle-001", success=True)
+    found = bridge.acknowledge_action(ack)
+    assert found is True
+
+    status3 = bridge.get_status()
+    assert status3["pending_actions"] == 0
+    assert status3["dispatched_actions"] == 0
+    assert status3["history_count"] == 1
+
+    print("  ✓ Full lifecycle state transitions (PENDING → DISPATCHED → ACK → CLEARED) verified.")
+
+
+def test_bridge_cancel_action():
+    """Test action cancellation."""
+    print("\n[TEST 20] Testing Bridge Action Cancellation...")
+    bridge = BrowserActionBridge()
+    bridge.register_heartbeat()
+
+    action = PendingAction(action_id="cancel-001", action_type="CLICK")
+    bridge.dispatch_action(action)
+
+    cancelled = bridge.cancel_action("cancel-001")
+    assert cancelled is True
+
+    # Trying to cancel again should fail
+    cancelled_again = bridge.cancel_action("cancel-001")
+    assert cancelled_again is False
+
+    print("  ✓ Action cancellation works correctly.")
+
+
 if __name__ == "__main__":
     print("==================================================")
     print("RUNNING REAL ACTION EXECUTION & AGENT TEST SUITE")
     print("==================================================")
+
+    # Original tests (simulation mode)
     test_click_and_stale_target_handling()
     test_type_execution_and_zero_leak()
     test_scroll_execution()
@@ -278,6 +613,21 @@ if __name__ == "__main__":
     test_page_change_detector()
     test_end_to_end_agent_runner_loop()
     test_high_risk_payment_confirmation_gate()
+
+    # New bridge tests
+    test_bridge_action_dispatch_and_ack()
+    test_bridge_timeout_handling()
+    test_bridge_extension_unavailable()
+    test_bridge_failed_ack()
+    test_bridge_stale_target_still_caught()
+    test_bridge_validator_rejection()
+    test_bridge_high_risk_confirmation()
+    test_bridge_click_dispatch_format()
+    test_bridge_type_dispatch_format()
+    test_bridge_scroll_dispatch_format()
+    test_bridge_pending_and_ack_lifecycle()
+    test_bridge_cancel_action()
+
     print("==================================================")
-    print("ALL ACTION EXECUTION & AGENT TESTS PASSED! ✓")
+    print("ALL 20 ACTION EXECUTION, AGENT & BRIDGE TESTS PASSED! ✓")
     print("==================================================")

@@ -106,18 +106,29 @@ class EndToEndAgentRunner:
             user_confirmed=user_confirmed
         )
 
-        # 4. VERIFY outcome
-        # Simulate / evaluate post-action elements
-        simulated_next_elements = [dict(e) for e in sanitized_elements]
-        if candidate.action == "TYPE" and candidate.target_id:
-            for el in simulated_next_elements:
+        # 4. VERIFY outcome using real execution result
+        # When in real mode, exec_res contains actual browser acknowledgement data.
+        # We no longer fabricate simulated_next_elements — instead we evaluate
+        # the real execution outcome and flag re-perception when needed.
+        re_perception_required = exec_res.page_changed
+
+        # Build post-action elements based on real outcome:
+        # If the action reported success and the page changed, the current elements
+        # are now stale and re-perception should be triggered by the caller.
+        # For verification, we pass the best-available state.
+        post_action_elements = list(sanitized_elements)
+        if exec_res.success and candidate.action == "TYPE" and candidate.target_id:
+            # Reflect the typed value from the real execution result for verification
+            post_action_elements = [dict(e) for e in sanitized_elements]
+            actual_value = exec_res.metadata.get("typed_value") or candidate.text or "[POPULATED]"
+            for el in post_action_elements:
                 if el.get("id") == candidate.target_id:
-                    el["value"] = candidate.text or "[POPULATED]"
+                    el["value"] = actual_value
 
         verify_res = self.planner.verify_step_outcome(
             action=action_dict,
             prev_elements=sanitized_elements,
-            current_elements=simulated_next_elements,
+            current_elements=post_action_elements,
             prev_url=current_url,
             current_url=current_url
         )
@@ -138,6 +149,7 @@ class EndToEndAgentRunner:
             "execution": exec_res.model_dump(),
             "verification": verify_res.model_dump(),
             "latency_ms": t_total_ms,
+            "re_perception_required": re_perception_required,
             "agent_summary": self.planner.get_agent_status()
         }
 

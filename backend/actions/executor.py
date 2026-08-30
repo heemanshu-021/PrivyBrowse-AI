@@ -2,8 +2,15 @@
 PrivyBrowse AI — Real Browser Action Executor
 Executes validated browser actions (CLICK, TYPE, SCROLL, PRESS_KEY, NAVIGATE, WAIT)
 across the local browser/extension bridge with strict privacy guarantees.
+
+In REAL mode (default): dispatches actions through BrowserActionBridge to the
+Chrome extension and waits for real acknowledgement from the content script.
+
+In SIMULATION mode (PRIVYBROWSE_SIMULATION_MODE=true): uses synthetic delays
+for offline development and testing without a live Chrome instance.
 """
 
+import os
 import time
 import re
 from datetime import datetime, timezone
@@ -15,19 +22,44 @@ from backend.actions.schemas import (
     ExecutionConfig, SupportedKey, PageChangeSignal
 )
 from backend.actions.page_change_detector import PageChangeDetector
+from backend.actions.browser_bridge import (
+    BrowserActionBridge, PendingAction, ActionBridgeResult
+)
+
+
+# Check for simulation mode via environment variable
+def _is_simulation_mode() -> bool:
+    return os.environ.get("PRIVYBROWSE_SIMULATION_MODE", "").lower() in ("true", "1", "yes")
 
 
 class ActionExecutor:
     """
     Real Browser Action Executor.
     Enforces security, validates schemes, and executes atomic browser interactions.
+
+    In real mode: dispatches through BrowserActionBridge to Chrome extension.
+    In simulation mode: uses synthetic delays for offline development.
     """
 
-    def __init__(self, config: Optional[ExecutionConfig] = None):
+    def __init__(
+        self,
+        config: Optional[ExecutionConfig] = None,
+        bridge: Optional[BrowserActionBridge] = None,
+        simulation_mode: Optional[bool] = None
+    ):
         self.config = config or ExecutionConfig()
         self.validator = ActionValidator()
         self.change_detector = PageChangeDetector()
         self.action_history: List[ActionResult] = []
+
+        # Bridge for real browser communication
+        self.bridge = bridge
+
+        # Simulation mode: explicit parameter > env var
+        if simulation_mode is not None:
+            self.simulation_mode = simulation_mode
+        else:
+            self.simulation_mode = _is_simulation_mode()
 
     def execute_action(
         self,
@@ -149,6 +181,112 @@ class ActionExecutor:
 
         return res
 
+    def _dispatch_via_bridge(
+        self,
+        action_id: str,
+        action_type: str,
+        t_start: float,
+        target_id: Optional[str] = None,
+        target: Optional[Dict[str, Any]] = None,
+        text: Optional[str] = None,
+        key: Optional[str] = None,
+        scroll_delta: Optional[Dict[str, Any]] = None,
+        url: Optional[str] = None,
+        description: Optional[str] = None,
+        extra_metadata: Optional[Dict[str, Any]] = None
+    ) -> ActionResult:
+        """
+        Dispatches an action through the BrowserActionBridge and waits for
+        the real acknowledgement from the Chrome extension content script.
+        Returns an ActionResult based on the actual browser execution outcome.
+        """
+        # Check extension connectivity
+        if not self.bridge.is_extension_connected():
+            return ActionResult(
+                success=False,
+                action_id=action_id,
+                action=action_type,
+                target_id=target_id,
+                duration_ms=round((time.perf_counter() - t_start) * 1000.0, 2),
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                status=ExecutionStatus.EXTENSION_UNAVAILABLE,
+                error=ActionError(
+                    code="EXTENSION_UNAVAILABLE",
+                    message="Chrome extension is not connected. Load the extension and navigate to a page."
+                )
+            )
+
+        # Build pending action
+        pending = PendingAction(
+            action_id=action_id,
+            action_type=action_type,
+            target_id=target_id,
+            target=target,
+            text=text,
+            key=key,
+            scroll_delta=scroll_delta,
+            url=url,
+            description=description,
+            timeout_ms=self.config.max_action_timeout_ms,
+            metadata=extra_metadata or {}
+        )
+
+        # Dispatch and wait
+        self.bridge.dispatch_action(pending)
+        bridge_result = self.bridge.wait_for_result(
+            action_id=action_id,
+            timeout_ms=self.config.max_action_timeout_ms
+        )
+
+        # Translate bridge result to ActionResult
+        dur = round((time.perf_counter() - t_start) * 1000.0, 2)
+
+        if bridge_result.success:
+            return ActionResult(
+                success=True,
+                action_id=action_id,
+                action=action_type,
+                target_id=bridge_result.target_id or target_id,
+                duration_ms=dur,
+                timestamp=bridge_result.execution_timestamp or datetime.now(timezone.utc).isoformat(),
+                page_changed=True,
+                status=ExecutionStatus.SUCCESS,
+                metadata={
+                    "method": "REAL_BROWSER_DISPATCH",
+                    "detail": bridge_result.detail,
+                    **(bridge_result.metadata or {}),
+                    **(extra_metadata or {})
+                }
+            )
+        else:
+            # Map bridge error codes to ExecutionStatus
+            if bridge_result.status == "TIMEOUT":
+                status = ExecutionStatus.EXTENSION_TIMEOUT
+            elif bridge_result.error_code == "TARGET_NOT_FOUND":
+                status = ExecutionStatus.STALE_TARGET
+            else:
+                status = ExecutionStatus.FAILED
+
+            return ActionResult(
+                success=False,
+                action_id=action_id,
+                action=action_type,
+                target_id=target_id,
+                duration_ms=dur,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                page_changed=False,
+                status=status,
+                error=ActionError(
+                    code=bridge_result.error_code or "BROWSER_EXECUTION_FAILED",
+                    message=bridge_result.error or "Action failed in browser"
+                ),
+                metadata={
+                    "method": "REAL_BROWSER_DISPATCH",
+                    "detail": bridge_result.detail,
+                    **(bridge_result.metadata or {})
+                }
+            )
+
     def _execute_click(
         self,
         action_id: str,
@@ -176,7 +314,18 @@ class ActionExecutor:
                     error=ActionError(code="TARGET_NOT_FOUND", message=f"Target element '{target_id}' is no longer in layout")
                 )
 
-        # Dispatch click coordinates
+        # Real mode: dispatch through bridge
+        if not self.simulation_mode and self.bridge:
+            return self._dispatch_via_bridge(
+                action_id=action_id,
+                action_type="CLICK",
+                t_start=t_start,
+                target_id=target_id,
+                target={"x": cx, "y": cy, "elementId": target_id},
+                extra_metadata={"coordinates": {"x": cx, "y": cy}}
+            )
+
+        # Simulation mode: synthetic dispatch
         time.sleep(0.015)  # 15ms simulated dispatch latency
         dur = round((time.perf_counter() - t_start) * 1000.0, 2)
 
@@ -189,7 +338,7 @@ class ActionExecutor:
             timestamp=datetime.now(timezone.utc).isoformat(),
             page_changed=True,
             status=ExecutionStatus.SUCCESS,
-            metadata={"coordinates": {"x": cx, "y": cy}, "method": "SYNTHETIC_POINTER_DISPATCH"}
+            metadata={"coordinates": {"x": cx, "y": cy}, "method": "SIMULATION_DISPATCH"}
         )
 
     def _execute_type(
@@ -213,6 +362,24 @@ class ActionExecutor:
 
         display_text = "[REDACTED_TEXT]" if is_sensitive else text
 
+        # Real mode: dispatch through bridge
+        if not self.simulation_mode and self.bridge:
+            return self._dispatch_via_bridge(
+                action_id=action_id,
+                action_type="TYPE",
+                t_start=t_start,
+                target_id=target_id,
+                target={"x": cx, "y": cy, "elementId": target_id},
+                text=text,
+                extra_metadata={
+                    "coordinates": {"x": cx, "y": cy},
+                    "characters_typed": len(text),
+                    "display_payload": display_text,
+                    "is_sensitive": is_sensitive
+                }
+            )
+
+        # Simulation mode: synthetic dispatch
         time.sleep(0.020)  # 20ms simulated typing latency
         dur = round((time.perf_counter() - t_start) * 1000.0, 2)
 
@@ -229,7 +396,8 @@ class ActionExecutor:
                 "coordinates": {"x": cx, "y": cy},
                 "characters_typed": len(text),
                 "display_payload": display_text,
-                "is_sensitive": is_sensitive
+                "is_sensitive": is_sensitive,
+                "method": "SIMULATION_DISPATCH"
             }
         )
 
@@ -245,6 +413,20 @@ class ActionExecutor:
         direction = "UP" if "UP" in action_name else "DOWN"
         scroll_delta = -step if direction == "UP" else step
 
+        # Real mode: dispatch through bridge
+        if not self.simulation_mode and self.bridge:
+            return self._dispatch_via_bridge(
+                action_id=action_id,
+                action_type="SCROLL",
+                t_start=t_start,
+                scroll_delta={"x": 0, "y": scroll_delta},
+                extra_metadata={
+                    "direction": direction,
+                    "delta_px": scroll_delta
+                }
+            )
+
+        # Simulation mode: synthetic dispatch
         time.sleep(0.025)  # 25ms scroll execution & frame stabilization
         dur = round((time.perf_counter() - t_start) * 1000.0, 2)
 
@@ -260,7 +442,8 @@ class ActionExecutor:
             metadata={
                 "direction": direction,
                 "delta_px": scroll_delta,
-                "stabilized": True
+                "stabilized": True,
+                "method": "SIMULATION_DISPATCH"
             }
         )
 
@@ -286,6 +469,20 @@ class ActionExecutor:
                 error=ActionError(code="UNSAFE_KEY", message=f"Key '{key_name}' is not in permitted safe keys list")
             )
 
+        # Real mode: dispatch through bridge
+        if not self.simulation_mode and self.bridge:
+            target_id = action_json.get("target_id") or action_json.get("element_id")
+            return self._dispatch_via_bridge(
+                action_id=action_id,
+                action_type="PRESS_KEY",
+                t_start=t_start,
+                target_id=target_id,
+                target={"elementId": target_id} if target_id else None,
+                key=key_name,
+                extra_metadata={"key": key_name}
+            )
+
+        # Simulation mode: synthetic dispatch
         time.sleep(0.010)
         dur = round((time.perf_counter() - t_start) * 1000.0, 2)
 
@@ -297,7 +494,7 @@ class ActionExecutor:
             timestamp=datetime.now(timezone.utc).isoformat(),
             page_changed=True,
             status=ExecutionStatus.SUCCESS,
-            metadata={"key": key_name}
+            metadata={"key": key_name, "method": "SIMULATION_DISPATCH"}
         )
 
     def _execute_navigate(
@@ -323,7 +520,21 @@ class ActionExecutor:
                 error=ActionError(code=err_code or "UNSAFE_URL_SCHEME", message=err_msg or "Navigation blocked for security")
             )
 
+        # Real mode: dispatch through bridge
+        if not self.simulation_mode and self.bridge:
+            return self._dispatch_via_bridge(
+                action_id=action_id,
+                action_type="NAVIGATE",
+                t_start=t_start,
+                url=target_url,
+                text=target_url,
+                extra_metadata={
+                    "previous_url": current_url,
+                    "target_url": target_url
+                }
+            )
 
+        # Simulation mode: synthetic dispatch
         time.sleep(0.040)  # 40ms navigation initiation
         dur = round((time.perf_counter() - t_start) * 1000.0, 2)
 
@@ -338,7 +549,8 @@ class ActionExecutor:
             metadata={
                 "previous_url": current_url,
                 "target_url": target_url,
-                "result_url": target_url
+                "result_url": target_url,
+                "method": "SIMULATION_DISPATCH"
             }
         )
 
