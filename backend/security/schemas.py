@@ -1,7 +1,7 @@
 """
 PrivyBrowse AI — Security & Adversarial Defense Schemas
 Data models for trust boundary definitions, threat classifications,
-prompt injection detections, and audit log records.
+prompt injection detections, deceptive UI, link safety, and audit log records.
 """
 
 from enum import Enum
@@ -23,14 +23,33 @@ class ThreatLevel(str, Enum):
 
 class SecurityEventType(str, Enum):
     PROMPT_INJECTION_DETECTED = "PROMPT_INJECTION_DETECTED"
+    INDIRECT_INJECTION_DETECTED = "INDIRECT_INJECTION_DETECTED"
+    UNTRUSTED_INSTRUCTION = "UNTRUSTED_INSTRUCTION"
     UNTRUSTED_ACTION_BLOCKED = "UNTRUSTED_ACTION_BLOCKED"
     RAW_CONTEXT_BLOCKED = "RAW_CONTEXT_BLOCKED"
     HIGH_RISK_ACTION_BLOCKED = "HIGH_RISK_ACTION_BLOCKED"
     STALE_TARGET_DETECTED = "STALE_TARGET_DETECTED"
+    STALE_SECURITY_CONTEXT = "STALE_SECURITY_CONTEXT"
     SUSPICIOUS_NAVIGATION_BLOCKED = "SUSPICIOUS_NAVIGATION_BLOCKED"
+    UNSAFE_EXTERNAL_DOMAIN = "UNSAFE_EXTERNAL_DOMAIN"
+    PROTOCOL_DOWNGRADE_BLOCKED = "PROTOCOL_DOWNGRADE_BLOCKED"
+    DECEPTIVE_UI_DETECTED = "DECEPTIVE_UI_DETECTED"
+    DECEPTIVE_LINK_DETECTED = "DECEPTIVE_LINK_DETECTED"
+    HIDDEN_ELEMENT_BLOCKED = "HIDDEN_ELEMENT_BLOCKED"
+    SENSITIVE_DATA_EXFILTRATION_ATTEMPT = "SENSITIVE_DATA_EXFILTRATION_ATTEMPT"
     RESOURCE_LIMIT_REACHED = "RESOURCE_LIMIT_REACHED"
     SECRET_LEAK_DETECTED = "SECRET_LEAK_DETECTED"
     RACE_CONDITION_DETECTED = "RACE_CONDITION_DETECTED"
+    VALIDATION_FAILURE = "VALIDATION_FAILURE"
+
+
+class TrustContext(BaseModel):
+    """Explicitly tags data origins to maintain strict trust boundaries."""
+    source_type: str = "WEBPAGE"  # SYSTEM, USER, WEBPAGE, EXTENSION, OCR
+    trust_level: TrustLevel = TrustLevel.UNTRUSTED
+    is_authoritative: bool = False
+    origin_domain: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class SecurityEvent(BaseModel):
@@ -53,6 +72,28 @@ class PromptInjectionScanResult(BaseModel):
     sanitized_text: str = ""
     original_length: int = 0
     sanitized_length: int = 0
+    is_indirect: bool = False
+    context_intent: Optional[str] = None
+
+
+class LinkSafetyResult(BaseModel):
+    is_safe: bool = True
+    risk_level: ThreatLevel = ThreatLevel.NORMAL
+    error_code: str = "SAFE"
+    reason: str = ""
+    target_url: str = ""
+    is_external_domain: bool = False
+    is_protocol_downgrade: bool = False
+    is_deceptive_text: bool = False
+
+
+class DeceptiveUIResult(BaseModel):
+    is_deceptive: bool = False
+    risk_level: ThreatLevel = ThreatLevel.NORMAL
+    mismatch_type: Optional[str] = None  # LABEL_ACTION_MISMATCH, HIDDEN_DESTRUCTIVE, EXFILTRATION_FORM
+    reason: str = ""
+    action_type: Optional[str] = None
+    target_id: Optional[str] = None
 
 
 class SecretScanResult(BaseModel):

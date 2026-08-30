@@ -126,6 +126,7 @@ class ActionExecutor:
                     metadata={"confirmation_required": True}
                 )
 
+            err_code = v_res.details.get("error_code", "VALIDATION_FAILED")
             return ActionResult(
                 success=False,
                 action_id=action_id,
@@ -134,7 +135,7 @@ class ActionExecutor:
                 duration_ms=round((time.perf_counter() - t_start) * 1000.0, 2),
                 timestamp=now_iso,
                 status=ExecutionStatus.BLOCKED,
-                error=ActionError(code="VALIDATION_FAILED", message=v_res.reason),
+                error=ActionError(code=err_code, message=v_res.reason),
                 metadata={"validation_reason": v_res.reason}
             )
 

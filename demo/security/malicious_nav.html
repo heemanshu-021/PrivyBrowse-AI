@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Security Evaluation — Malicious Navigation & Deceptive Links</title>
+    <style>
+        body { font-family: sans-serif; margin: 40px; background: #0f172a; color: #f8fafc; }
+        .card { background: #1e293b; padding: 24px; border-radius: 8px; max-width: 600px; }
+        a { color: #60a5fa; text-decoration: underline; display: block; margin: 12px 0; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>ISRO Research Publications</h2>
+        <p>Verified scientific documentation and repository links:</p>
+        <a id="link-official-safe" href="https://www.isro.gov.in/publications">Official ISRO Publications Archive</a>
+        <a id="link-deceptive-nav" href="http://attacker-phish.test/isro/login">Official ISRO Secure Portal (Login Required)</a>
+        <a id="link-javascript-payload" href="javascript:alert('XSS')">View Dynamic Telemetry Stream</a>
+    </div>
+</body>
+</html>

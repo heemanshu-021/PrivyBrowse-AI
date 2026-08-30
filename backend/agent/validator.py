@@ -1,19 +1,22 @@
 """
-PrivyBrowse AI — Action Validator & Safety Gatekeeper
-Validates proposed browser actions against strict bounds, confidence thresholds,
-loop detection, and privacy policies before execution.
+PrivyBrowse AI — Action Validation & Safety Gatekeeper
+Validates all candidate actions before dispatch. Guarantees that no invalid,
+out-of-bounds, adversarial, deceptive, unverified, or high-risk unconfirmed action is executed.
 """
 
-from typing import Dict, Any, Tuple, Optional, List
+from typing import Dict, Any, List, Optional, Tuple
 from backend.agent.schemas import (
-    CandidateAction, ValidationResult, RiskLevel, TaskConstraints
+    ValidationResult, RiskLevel, TaskConstraints, ActionType
 )
+from backend.security.navigation_guard import NavigationGuard
+from backend.security.deceptive_ui_guard import DeceptiveUIGuard
+from backend.security.schemas import ThreatLevel
 
 
 class ActionValidator:
     """
     Pre-execution Safety Gatekeeper.
-    Guarantees no invalid, unverified, out-of-budget, or high-risk unconfirmed action is executed.
+    Guarantees no invalid, unverified, out-of-budget, deceptive, or high-risk unconfirmed action is executed.
     """
 
     def __init__(self, min_confidence: float = 0.50):
@@ -48,10 +51,12 @@ class ActionValidator:
         actions_executed_so_far: int = 0,
         history: List[Dict[str, Any]] = None,
         screen_width: int = 1920,
-        screen_height: int = 1080
+        screen_height: int = 1080,
+        current_url: str = ""
     ) -> ValidationResult:
         """
-        Comprehensive pre-execution validation.
+        Comprehensive pre-execution validation with security, link safety,
+        deceptive UI analysis, and budget checks.
         """
         if not isinstance(action_json, dict):
             return ValidationResult(allowed=False, reason="ACTION_MUST_BE_JSON_OBJECT")
@@ -129,11 +134,44 @@ class ActionValidator:
                 risk_level=RiskLevel.MEDIUM
             )
 
-        # 4b. Target Element Visibility Check
+        # 5. Target Element Security, Deceptive UI & Visibility Checks
         target_id = action_json.get("target_id") or action_json.get("element_id")
         if target_id and fused_elements:
             matched_el = next((e for e in fused_elements if e.get("id") == target_id), None)
             if matched_el:
+                # 5a. Deceptive UI Analysis
+                deceptive_res = DeceptiveUIGuard.analyze_element(matched_el, current_url=current_url)
+                if deceptive_res.is_deceptive:
+                    if deceptive_res.risk_level == ThreatLevel.CRITICAL:
+                        return ValidationResult(
+                            allowed=False,
+                            reason=f"DECEPTIVE_UI_BLOCKED: {deceptive_res.reason}",
+                            risk_level=RiskLevel.CRITICAL,
+                            requires_confirmation=True,
+                            details={"mismatch_type": deceptive_res.mismatch_type}
+                        )
+                    elif deceptive_res.risk_level == ThreatLevel.HIGH_RISK:
+                        return ValidationResult(
+                            allowed=False,
+                            reason=f"SECURITY_RISK_BLOCKED: {deceptive_res.reason}",
+                            risk_level=RiskLevel.HIGH
+                        )
+
+                # 5b. Link Safety for LINK elements
+                if matched_el.get("type") == "LINK" or matched_el.get("tag") == "a":
+                    href = matched_el.get("attributes", {}).get("href", "")
+                    link_text = matched_el.get("text", "")
+                    if href:
+                        link_res = NavigationGuard.validate_link_safety(link_text, href, current_url=current_url)
+                        if not link_res.is_safe:
+                            return ValidationResult(
+                                allowed=False,
+                                reason=f"UNSAFE_LINK_BLOCKED: {link_res.reason}",
+                                risk_level=RiskLevel.HIGH,
+                                details={"error_code": link_res.error_code, "target_url": link_res.target_url}
+                            )
+
+                # 5c. Visibility Checks
                 vis = str(matched_el.get("visibility", "VISIBLE")).upper()
                 if vis in ("HIDDEN", "INVISIBLE", "OCCLUDED") or matched_el.get("visible") is False:
                     return ValidationResult(
@@ -141,14 +179,29 @@ class ActionValidator:
                         reason=f"TARGET_IS_{vis}: Action cannot be performed on hidden/invisible element '{target_id}'",
                         risk_level=RiskLevel.HIGH
                     )
-                # Check for critical keywords in matched element
+
+                # 5d. Check for destructive/critical keywords in matched element
                 el_text = str(matched_el.get("text", "")).lower()
-                if any(w in el_text for w in ("delete", "destroy", "wipe", "format", "transfer", "pay", "authorize")):
+                if any(w in el_text for w in ("delete", "destroy", "wipe", "format", "transfer", "pay", "authorize", "wire")):
                     action_json["risk_level"] = RiskLevel.CRITICAL
                     action_json["requires_confirmation"] = True
 
+        # 6. NAVIGATE Specific Security Checks
+        if action_name == "NAVIGATE":
+            url = action_json.get("url")
+            if not url:
+                return ValidationResult(allowed=False, reason="NAVIGATE action requires a 'url' parameter")
 
-        # 5. Financial / Confirmation Policy Check
+            is_safe, nav_code, nav_err = NavigationGuard.validate_url(url, current_url=current_url)
+            if not is_safe:
+                return ValidationResult(
+                    allowed=False,
+                    reason=f"NAVIGATION_GUARD_BLOCKED: {nav_err}",
+                    risk_level=RiskLevel.HIGH,
+                    details={"error_code": nav_code, "blocked_url": url}
+                )
+
+        # 7. Financial / High-Risk Confirmation Policy Check
         risk = action_json.get("risk_level", RiskLevel.LOW)
         if isinstance(risk, str):
             try:
@@ -166,17 +219,11 @@ class ActionValidator:
                     requires_confirmation=True
                 )
 
-        # 6. TYPE Specific Checks
+        # 8. TYPE Specific Checks
         if action_name == "TYPE":
             text = action_json.get("text")
             if text is None:
                 return ValidationResult(allowed=False, reason="TYPE action requires a 'text' parameter")
-
-        # 7. NAVIGATE Specific Checks
-        if action_name == "NAVIGATE":
-            url = action_json.get("url")
-            if not url:
-                return ValidationResult(allowed=False, reason="NAVIGATE action requires a 'url' parameter")
 
         return ValidationResult(
             allowed=True,

@@ -77,11 +77,14 @@ class SecurityAuditLogger:
         return len(self._events)
 
     def _sanitize_log_text(self, text: str) -> str:
-        """Strips raw credential sequences from log messages."""
+        """Strips raw credential sequences and secret values from log messages."""
         if not text:
             return ""
-        # Mask obvious long token or secret sequences
-        text = re.sub(r"ghp_[a-zA-Z0-9]{30,}", "[REDACTED_GITHUB_TOKEN]", text)
+        # Mask password and secret phrase values
+        text = re.sub(r"(?i)(?:password|pwd|secret|api[_-]?key)\s*[:= ]\s*(\S+)", r"password: [REDACTED_PASSWORD]", text)
+        text = re.sub(r"(?i)\bwith\s+password\s+(\S+)", r"with password [REDACTED_PASSWORD]", text)
+        text = re.sub(r"ghp_[a-zA-Z0-9]{20,}", "[REDACTED_GITHUB_TOKEN]", text)
+        text = re.sub(r"sk-[a-zA-Z0-9]{15,}", "[REDACTED_API_KEY]", text)
         text = re.sub(r"\b(?:\d[ -]*?){13,16}\b", "[REDACTED_CARD_NUMBER]", text)
         text = re.sub(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", "[REDACTED_PAN]", text)
         return text
