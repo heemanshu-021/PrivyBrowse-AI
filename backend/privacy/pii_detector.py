@@ -20,6 +20,7 @@ from backend.privacy.rules.pattern_rules import (
 from backend.privacy.rules.context_rules import (
     is_false_positive_number, boost_confidence_with_context
 )
+from backend.observability.publisher import global_event_publisher
 
 
 class PIIDetector:
@@ -477,6 +478,12 @@ class PIIDetector:
         # 4. DEDUPLICATION & BOX COALESCENCE
         # -------------------------------------------------------------
         deduplicated = self._deduplicate_entities(detected_entities)
+        if deduplicated:
+            unique_types = sorted(list(set(e.type for e in deduplicated)))
+            global_event_publisher.pii_detected(
+                count=len(deduplicated),
+                pii_types=unique_types
+            )
         return deduplicated
 
     def _deduplicate_entities(self, entities: List[PIIEntity]) -> List[PIIEntity]:

@@ -11,7 +11,12 @@ import type {
   DemoScenario,
   AppSettings,
   LogEntry,
-  DOMNode
+  DOMNode,
+  ObservabilityEvent,
+  SystemHealthStatus,
+  DashboardSnapshot,
+  AgentTaskDTO,
+  BrowserContextDTO
 } from '../types';
 
 export const DEMO_SCENARIOS: DemoScenario[] = [
@@ -181,6 +186,15 @@ interface AppContextType {
   stopAgent: () => void;
   resetState: () => void;
   refreshHealth: () => Promise<void>;
+
+  // Real-Time Observability & Monitoring
+  liveEvents: ObservabilityEvent[];
+  activeTask: AgentTaskDTO | null;
+  browserContext: BrowserContextDTO | null;
+  systemHealth: SystemHealthStatus | null;
+  eventStreamConnected: boolean;
+  dashboardSnapshot: DashboardSnapshot | null;
+  fetchDashboardSnapshot: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -193,6 +207,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [perceptionStatus, setPerceptionStatus] = useState<'READY' | 'RUNNING' | 'ERROR'>('READY');
   const [privacyStatus, setPrivacyStatus] = useState<'PROTECTED' | 'WARNING' | 'ERROR'>('PROTECTED');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+
+  // Real-time observability state
+  const [liveEvents, setLiveEvents] = useState<ObservabilityEvent[]>([]);
+  const [activeTask, setActiveTask] = useState<AgentTaskDTO | null>(null);
+  const [browserContext, setBrowserContext] = useState<BrowserContextDTO | null>(null);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthStatus | null>(null);
+  const [eventStreamConnected, setEventStreamConnected] = useState<boolean>(false);
+  const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
 
   const [currentScenario, setCurrentScenario] = useState<DemoScenario>(DEMO_SCENARIOS[2]); // Default to checkout
   const [taskText, setTaskText] = useState<string>(DEMO_SCENARIOS[2].task);
@@ -250,21 +272,125 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setLogs(prev => [entry, ...prev.slice(0, 99)]);
   }, []);
 
+  const fetchDashboardSnapshot = useCallback(async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/api/dashboard/overview");
+      if (res.ok) {
+        const data: DashboardSnapshot = await res.json();
+        setDashboardSnapshot(data);
+        if (data.active_task) {
+          setActiveTask(data.active_task);
+        }
+        if (data.browser_context) {
+          setBrowserContext(data.browser_context);
+        }
+        if (data.health) {
+          setSystemHealth(data.health);
+          setBackendConnected(data.health.backend_healthy);
+          setExtensionConnected(data.health.extension_connected);
+        }
+        if (data.recent_events && data.recent_events.length > 0) {
+          setLiveEvents(prev => {
+            const existingIds = new Set(prev.map(e => e.seq_id));
+            const newEvents = data.recent_events.filter(e => !existingIds.has(e.seq_id));
+            return [...newEvents, ...prev].slice(0, 200);
+          });
+        }
+      }
+    } catch {
+      // Backend not reached
+    }
+  }, []);
+
+  // SSE Live Event Stream Connection
+  useEffect(() => {
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const connectSSE = () => {
+      try {
+        eventSource = new EventSource("http://127.0.0.1:8000/api/events/stream");
+
+        eventSource.onopen = () => {
+          setEventStreamConnected(true);
+          setBackendConnected(true);
+          addLog('sys', 'Connected to real-time agent event stream (SSE)');
+          fetchDashboardSnapshot();
+        };
+
+        eventSource.onmessage = (e) => {
+          try {
+            const parsed: ObservabilityEvent = JSON.parse(e.data);
+            setLiveEvents(prev => {
+              if (prev.some(item => item.seq_id === parsed.seq_id)) return prev;
+              return [parsed, ...prev].slice(0, 200);
+            });
+
+            // Map event to log
+            const logTag: 'sys' | 'act' | 'sec' | 'warn' | 'err' =
+              parsed.severity === 'ERROR' || parsed.severity === 'CRITICAL' ? 'err' :
+              parsed.severity === 'WARNING' ? 'warn' :
+              parsed.component === 'SECURITY' ? 'sec' :
+              parsed.component === 'ACTION_EXECUTOR' || parsed.component === 'ACTION_VERIFIER' ? 'act' : 'sys';
+
+            addLog(logTag, `[${parsed.component}] ${parsed.message}`);
+
+            // State synchronizations
+            if (parsed.event_type.startsWith("TASK_")) {
+              fetchDashboardSnapshot();
+            }
+            if (parsed.event_type === "PII_DETECTED") {
+              setPrivacyStatus('WARNING');
+            }
+            if (parsed.event_type === "PROMPT_INJECTION_DETECTED" || parsed.event_type === "SECURITY_BLOCKED") {
+              addLog('sec', `SECURITY ALERT: ${parsed.message}`);
+            }
+          } catch {
+            // Non-JSON heartbeat or sync message
+          }
+        };
+
+        eventSource.onerror = () => {
+          setEventStreamConnected(false);
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          // Schedule reconnect attempt
+          reconnectTimeout = setTimeout(connectSSE, 3000);
+        };
+      } catch {
+        setEventStreamConnected(false);
+        reconnectTimeout = setTimeout(connectSSE, 3000);
+      }
+    };
+
+    connectSSE();
+    fetchDashboardSnapshot();
+
+    // Fallback polling every 4 seconds
+    const interval = setInterval(fetchDashboardSnapshot, 4000);
+
+    return () => {
+      if (eventSource) eventSource.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      clearInterval(interval);
+    };
+  }, [addLog, fetchDashboardSnapshot]);
+
   const refreshHealth = useCallback(async () => {
     try {
       const res = await fetch(`${BACKEND_URL}/health`);
       if (res.ok) {
         setBackendConnected(true);
         addLog('sys', 'Connected to PrivyBrowse Local Perception Engine on port 8000');
-        
-        // Fetch metrics
+
         const mRes = await fetch(`${BACKEND_URL}/metrics`);
         if (mRes.ok) {
           const mData = await mRes.json();
           setMetrics(mData);
         }
 
-        // Fetch extension / browser status
         try {
           const bRes = await fetch(`${BACKEND_URL}/browser/status`);
           if (bRes.ok) {
@@ -697,7 +823,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resumeAgent,
         stopAgent,
         resetState,
-        refreshHealth
+        refreshHealth,
+        liveEvents,
+        activeTask,
+        browserContext,
+        systemHealth,
+        eventStreamConnected,
+        dashboardSnapshot,
+        fetchDashboardSnapshot
       }}
     >
       {children}

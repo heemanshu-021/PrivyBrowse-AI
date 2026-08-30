@@ -26,6 +26,7 @@ from backend.perception.detectors.visual_detector import VisualDetector
 from backend.perception.detectors.dom_detector import DOMDetector
 from backend.perception.detectors.text_detector import TextDetector
 from backend.perception.fusion.context_fuser import ContextFuser
+from backend.observability.publisher import global_event_publisher
 
 
 class PerceptionPipeline:
@@ -243,6 +244,13 @@ class PerceptionPipeline:
             viewport={"width": effective_vw, "height": effective_vh},
             scroll_position={"x": scroll_x, "y": scroll_y},
             document_dimensions={"width": document_width, "height": document_height},
+        )
+
+        global_event_publisher.perception_completed(
+            element_count=len(fused_elements),
+            duration_ms=latency.total_ms,
+            ocr_count=len(ocr_results),
+            cv_count=len(vision_elements)
         )
 
         return PerceptionResult(

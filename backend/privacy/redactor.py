@@ -14,6 +14,7 @@ from backend.privacy.schemas import (
     PIIEntity, RedactionItem, RedactionMap, SanitizedContext,
     DataClassification, PII_CLASSIFICATION_MAP, PIIType
 )
+from backend.observability.publisher import global_event_publisher
 
 
 class Redactor:
@@ -155,6 +156,12 @@ class Redactor:
             style=redaction_style,
             timestamp=str(time.time())
         )
+
+        if len(redaction_items) > 0:
+            global_event_publisher.pii_redacted(
+                count=len(redaction_items),
+                style=redaction_style
+            )
 
         return redacted_bytes, redaction_map
 

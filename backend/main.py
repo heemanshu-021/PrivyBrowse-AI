@@ -1,12 +1,19 @@
 import time
 import base64
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
+import asyncio
+
+from backend.observability import (
+    global_event_bus, global_event_publisher,
+    SystemHealthStatus, DashboardSnapshot,
+    EventComponent, EventSeverity
+)
 
 # Import custom core engines (legacy)
 from backend.perception.element_detector import ElementDetector
@@ -808,6 +815,174 @@ def scan_repository_secrets():
             mitigation_action="ALERT_TRIGGERED"
         )
     return scan_res.model_dump()
+
+
+# --- REAL-TIME OBSERVABILITY & MONITORING ENDPOINTS ---
+
+@app.get("/api/events")
+def get_observability_events(
+    limit: int = Query(default=100, ge=1, le=500),
+    since_seq: Optional[int] = Query(default=None),
+    component: Optional[str] = Query(default=None),
+    severity: Optional[str] = Query(default=None),
+    task_id: Optional[str] = Query(default=None)
+):
+    """
+    Queries real-time system events from bounded in-memory ring buffer with filtering.
+    """
+    comp_enum = None
+    if component:
+        try:
+            comp_enum = EventComponent(component.upper())
+        except ValueError:
+            pass
+
+    sev_enum = None
+    if severity:
+        try:
+            sev_enum = EventSeverity(severity.upper())
+        except ValueError:
+            pass
+
+    events = global_event_bus.get_events(
+        limit=limit,
+        since_seq=since_seq,
+        component=comp_enum,
+        severity=sev_enum,
+        task_id=task_id
+    )
+
+    return {
+        "total_published": global_event_bus.get_total_events_count(),
+        "returned_count": len(events),
+        "events": [e.model_dump() for e in events]
+    }
+
+
+@app.get("/api/events/stream")
+async def stream_observability_events(request: Request):
+    """
+    Server-Sent Events (SSE) live push stream for the monitoring dashboard.
+    Emits real-time events as they occur across the browser, agent, perception, and privacy layers.
+    """
+    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    global_event_bus.subscribe_async(queue)
+
+    async def event_generator():
+        try:
+            # Yield initial sync event
+            initial_sync = {
+                "type": "CONNECTION_ESTABLISHED",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "total_events": global_event_bus.get_total_events_count()
+            }
+            yield f"event: sync\ndata: {str(initial_sync)}\n\n"
+
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    # Wait for next event or heartbeat timeout
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield f"event: message\ndata: {event.to_sse_payload()}\n\n"
+                except asyncio.TimeoutError:
+                    # Keep-alive heartbeat ping
+                    yield f": heartbeat\n\n"
+        finally:
+            global_event_bus.unsubscribe_async(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@app.get("/api/system/health")
+def get_system_health():
+    """
+    Evaluates real-time health and connectivity of backend, browser extension,
+    perception engine, and event bus.
+    """
+    ext_status = browser_bridge.get_status()
+    is_ext_connected = bool(ext_status.get("connected", False))
+    ctx = global_browser_context_manager.current_context
+    is_browser_connected = bool(ctx and ctx.url)
+
+    health = SystemHealthStatus(
+        backend_healthy=True,
+        extension_connected=is_ext_connected,
+        browser_connected=is_browser_connected,
+        event_stream_active=True,
+        perception_available=True,
+        ocr_available=perception_pipeline.ocr_engine.is_available(),
+        last_heartbeat=datetime.now(timezone.utc).isoformat(),
+        status_summary="HEALTHY" if is_ext_connected or is_browser_connected else "STANDBY"
+    )
+    return health.model_dump()
+
+
+@app.get("/api/dashboard/overview")
+def get_dashboard_overview():
+    """
+    Returns aggregated real-time dashboard snapshot for instant hydration.
+    """
+    ext_status = browser_bridge.get_status()
+    is_ext_connected = bool(ext_status.get("connected", False))
+    ctx = global_browser_context_manager.current_context
+    is_browser_connected = bool(ctx and ctx.url)
+
+    health = SystemHealthStatus(
+        backend_healthy=True,
+        extension_connected=is_ext_connected,
+        browser_connected=is_browser_connected,
+        event_stream_active=True,
+        perception_available=True,
+        ocr_available=perception_pipeline.ocr_engine.is_available(),
+        last_heartbeat=datetime.now(timezone.utc).isoformat(),
+        status_summary="HEALTHY" if is_ext_connected or is_browser_connected else "STANDBY"
+    )
+
+    task_data = agent_planner.current_task.model_dump() if agent_planner.current_task else None
+    ctx_data = ctx.model_dump() if ctx else None
+
+    # Calculate real measured performance distributions
+    perf_metrics = benchmark_runner.tracker.get_all_distributions()
+    mem_rss = benchmark_runner.tracker.get_memory_usage_mb()
+
+    # Get recent actions from agent runner
+    recent_actions = agent_planner.memory.history[-10:] if hasattr(agent_planner, "memory") and hasattr(agent_planner.memory, "history") else []
+
+    snapshot = DashboardSnapshot(
+        health=health,
+        active_task=task_data,
+        browser_context=ctx_data,
+        agent_state=agent_planner.state_machine.current_state.value,
+        privacy_metrics={
+            "total_pii_detected": metrics_store["total_pii_detected"],
+            "total_pii_redacted": metrics_store["total_pii_redacted"],
+            "last_pii_latency_ms": round(metrics_store["last_pii_latency"] * 1000.0, 2)
+        },
+        security_metrics={
+            "total_security_events": security_logger.get_total_events(),
+            "event_counts": security_logger.get_event_count_by_type(),
+            "trust_boundary_active": True
+        },
+        performance_metrics={
+            "distributions": perf_metrics,
+            "memory_rss_mb": mem_rss,
+            "total_actions": metrics_store["total_actions"]
+        },
+        recent_events=global_event_bus.get_events(limit=30),
+        recent_actions=recent_actions,
+        timestamp=datetime.now(timezone.utc).isoformat()
+    )
+
+    return snapshot.model_dump()
 
 
 if __name__ == "__main__":

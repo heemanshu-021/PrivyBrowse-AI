@@ -19,6 +19,7 @@ from backend.agent.engine import LocalRuleBasedEngine
 from backend.agent.validator import ActionValidator
 from backend.agent.verifier import ActionVerifier
 from backend.agent.memory import AgentMemory
+from backend.observability.publisher import global_event_publisher
 
 
 class AgentPlanner:
@@ -34,6 +35,7 @@ class AgentPlanner:
         self.validator = ActionValidator(min_confidence=min_confidence)
         self.verifier = ActionVerifier()
         self.memory = AgentMemory()
+        self.events = global_event_publisher
 
         self.current_task: Optional[AgentTask] = None
         self.metrics = {
@@ -82,6 +84,14 @@ class AgentPlanner:
 
         self.current_task = task
         self.metrics["tasks_created"] += 1
+
+        self.events.task_created(
+            task_id=task.task_id,
+            goal=task.goal,
+            steps_count=len(task.steps),
+            metadata={"current_url": current_url}
+        )
+
         return task
 
     def replan_task(
@@ -102,6 +112,14 @@ class AgentPlanner:
         )
         task.updated_at = datetime.now(timezone.utc).isoformat()
         task.pending_steps = [s.id for s in task.steps[task.current_step_index:]]
+
+        self.events.task_replanned(
+            task_id=task.task_id,
+            reason=failure_reason or "Context change or step failure",
+            remaining_steps_count=len(task.pending_steps),
+            metadata={"failed_step_index": failed_step_index, "current_url": current_url}
+        )
+
         return updated
 
     def check_task_completion(
@@ -206,6 +224,12 @@ class AgentPlanner:
                 self.state_machine.transition_to(AgentState.COMPLETED, f"Task completed: {comp_reason}")
             task.status = AgentState.COMPLETED
             self.metrics["tasks_completed"] += 1
+            self.events.task_completed(
+                task_id=task.task_id,
+                goal=task.goal,
+                duration_ms=round((time.perf_counter() - t0) * 1000.0, 2),
+                metadata={"reason": comp_reason, "completed_steps": task.completed_steps}
+            )
             return None, ValidationResult(allowed=False, reason=comp_reason), AgentState.COMPLETED
 
         active_objective = task.objectives[task.current_objective_index]

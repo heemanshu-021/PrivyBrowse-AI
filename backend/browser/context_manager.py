@@ -11,6 +11,7 @@ from enum import Enum
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
+from backend.observability.publisher import global_event_publisher
 
 
 class LoadingState(str, Enum):
@@ -261,6 +262,13 @@ class BrowserContextManager:
             if len(self._context_history) > self._max_history:
                 self._context_history.pop(0)
 
+            global_event_publisher.browser_context_updated(
+                tab_id=ctx.tab_id,
+                url=ctx.url,
+                title=ctx.title,
+                element_count=ctx.element_count
+            )
+
             return ctx
 
     def handle_browser_event(
@@ -282,6 +290,11 @@ class BrowserContextManager:
                 self._active_tab_id = tab_id
                 if tab_id in self._tab_contexts:
                     self._current_context = self._tab_contexts[tab_id]
+                global_event_publisher.tab_changed(
+                    from_tab_id=old_tab,
+                    to_tab_id=tab_id,
+                    url=self._current_context.url if self._current_context else ""
+                )
                 return True, f"Active tab changed from {old_tab} to {tab_id}"
 
             # 2. TAB CLOSED
@@ -319,6 +332,11 @@ class BrowserContextManager:
                     self._current_context = new_ctx
                     if new_ctx.tab_id is not None:
                         self._tab_contexts[new_ctx.tab_id] = new_ctx
+                    global_event_publisher.navigation_detected(
+                        tab_id=self._current_context.tab_id if self._current_context else None,
+                        from_url=old_url,
+                        to_url=new_url
+                    )
                     return True, f"URL navigated from {old_url} to {new_url}"
                 return True, "Navigation occurred"
 

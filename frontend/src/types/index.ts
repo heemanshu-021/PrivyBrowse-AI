@@ -241,3 +241,98 @@ export interface LogEntry {
   text: string;
   metadata?: Record<string, unknown>;
 }
+
+export type EventSeverity = 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR' | 'CRITICAL';
+export type EventComponent =
+  | 'TASK_MANAGER'
+  | 'PLANNER'
+  | 'AGENT_RUNNER'
+  | 'BROWSER_CONTEXT'
+  | 'PERCEPTION'
+  | 'OCR'
+  | 'PRIVACY'
+  | 'SECURITY'
+  | 'ACTION_VALIDATOR'
+  | 'ACTION_EXECUTOR'
+  | 'ACTION_VERIFIER'
+  | 'RECOVERY'
+  | 'EXTENSION'
+  | 'SYSTEM';
+
+export interface ObservabilityEvent {
+  seq_id: number;
+  event_id: string;
+  event_type: string;
+  severity: EventSeverity;
+  component: EventComponent;
+  timestamp: string;
+  task_id?: string;
+  step_id?: string;
+  tab_id?: number;
+  message: string;
+  duration_ms?: number;
+  status?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SystemHealthStatus {
+  backend_healthy: boolean;
+  extension_connected: boolean;
+  browser_connected: boolean;
+  event_stream_active: boolean;
+  perception_available: boolean;
+  ocr_available: boolean;
+  last_heartbeat: string;
+  status_summary: string;
+}
+
+export interface TaskStepDTO {
+  id: string;
+  description: string;
+  target_type?: string;
+  semantic_intent?: string;
+  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'BLOCKED' | 'AWAITING_CONFIRMATION';
+  success_criteria: string;
+  dependencies: string[];
+  evidence: string[];
+  retry_count: number;
+  failure_reason?: string;
+}
+
+export interface AgentTaskDTO {
+  task_id: string;
+  goal: string;
+  status: string;
+  steps: TaskStepDTO[];
+  current_step_index: number;
+  completed_steps: string[];
+  pending_steps: string[];
+  failed_steps: string[];
+  task_progress: number;
+  actions_executed: number;
+  created_at: string;
+}
+
+export interface BrowserContextDTO {
+  context_id: string;
+  tab_id?: number;
+  url: string;
+  hostname: string;
+  title: string;
+  loading_state: string;
+  element_count: number;
+  timestamp: string;
+}
+
+export interface DashboardSnapshot {
+  health: SystemHealthStatus;
+  active_task?: AgentTaskDTO;
+  browser_context?: BrowserContextDTO;
+  agent_state: string;
+  privacy_metrics: Record<string, unknown>;
+  security_metrics: Record<string, unknown>;
+  performance_metrics: Record<string, unknown>;
+  recent_events: ObservabilityEvent[];
+  recent_actions: Record<string, unknown>[];
+  timestamp: string;
+}

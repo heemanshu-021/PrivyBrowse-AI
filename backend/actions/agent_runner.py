@@ -20,6 +20,7 @@ from backend.actions.schemas import ActionResult, ExecutionStatus, ExpectedState
 from backend.actions.page_change_detector import PageChangeDetector
 from backend.agent.recovery import ProgressTracker, RecoveryEngine
 from backend.browser.context_manager import global_browser_context_manager
+from backend.observability.publisher import global_event_publisher
 
 
 class EndToEndAgentRunner:
@@ -33,13 +34,15 @@ class EndToEndAgentRunner:
         self,
         planner: Optional[AgentPlanner] = None,
         executor: Optional[ActionExecutor] = None,
-        recovery_engine: Optional[RecoveryEngine] = None
+        recovery_engine: Optional[RecoveryEngine] = None,
+        event_publisher: Optional[Any] = None
     ):
         self.planner = planner or AgentPlanner()
         self.executor = executor or ActionExecutor()
         self.change_detector = PageChangeDetector()
         self.recovery_engine = recovery_engine or getattr(self.planner.verifier, "recovery_engine", RecoveryEngine())
         self.progress_tracker = ProgressTracker()
+        self.events = event_publisher or global_event_publisher
         self.active_task: Optional[AgentTask] = None
         self.is_stopped = False
         self.is_paused = False
@@ -80,6 +83,8 @@ class EndToEndAgentRunner:
             current_url=current_url
         )
 
+        task_id = self.planner.current_task.task_id if self.planner.current_task else None
+
         if not candidate:
             return {
                 "status": "COMPLETED" if state == AgentState.COMPLETED else "NO_ACTION",
@@ -91,6 +96,12 @@ class EndToEndAgentRunner:
         # 2. VALIDATE action
         if not validation.allowed:
             if validation.requires_confirmation and not user_confirmed:
+                self.events.confirmation_required(
+                    action_type=candidate.action.value,
+                    target_id=candidate.target_id,
+                    reason=validation.reason,
+                    task_id=task_id
+                )
                 return {
                     "status": "REQUIRES_CONFIRMATION",
                     "message": "High-risk or financial interaction requires user confirmation",
@@ -106,6 +117,13 @@ class EndToEndAgentRunner:
                 "action": candidate.model_dump(),
                 "validation": validation.model_dump()
             }
+
+        self.events.action_validated(
+            action_type=candidate.action.value,
+            target_id=candidate.target_id,
+            risk_level=candidate.risk_level.value,
+            task_id=task_id
+        )
 
         # 3. GENERATE EXPECTED STATE
         target_el = next((e for e in sanitized_elements if e.get("id") == candidate.target_id), None)
@@ -176,6 +194,26 @@ class EndToEndAgentRunner:
 
         t_total_ms = round((time.perf_counter() - t0) * 1000.0, 2)
 
+        self.events.action_completed(
+            action_type=candidate.action.value,
+            target_id=candidate.target_id,
+            duration_ms=exec_res.duration_ms or t_total_ms,
+            task_id=task_id
+        )
+
+        if verify_res.success:
+            self.events.action_verified(
+                signal=verify_res.signal,
+                evidence=verify_res.evidence,
+                task_id=task_id
+            )
+        else:
+            self.events.action_verification_failed(
+                signal=verify_res.signal,
+                reason=verify_res.details,
+                task_id=task_id
+            )
+
         # 6. PROGRESS TRACKING & LOOP DETECTION
         action_sig = f"{candidate.action.value}:{candidate.target_id or candidate.text or ''}"
         dom_fp = getattr(live_ctx.dom_fingerprint, "hash", "") if (live_ctx and live_ctx.dom_fingerprint) else ""
@@ -194,6 +232,10 @@ class EndToEndAgentRunner:
             verify_res.failure_category = loop_cat
             verify_res.recovery_recommendation = RecoveryRecommendation.SAFE_STOP
             verify_res.details = loop_reason or "Action loop / stall detected"
+            self.events.loop_detected(
+                reason=verify_res.details,
+                task_id=task_id
+            )
 
         # Record action in planner memory
         self.planner.memory.record_action(action_dict)
@@ -208,6 +250,14 @@ class EndToEndAgentRunner:
                     self.planner.current_task.completed_steps.append(curr_step.id)
                 if curr_step.id in self.planner.current_task.pending_steps:
                     self.planner.current_task.pending_steps.remove(curr_step.id)
+
+                self.events.task_step_completed(
+                    task_id=self.planner.current_task.task_id,
+                    step_id=curr_step.id,
+                    description=curr_step.description,
+                    duration_ms=t_total_ms,
+                    metadata={"evidence": curr_step.evidence}
+                )
                 
                 if self.planner.current_task.current_step_index < len(self.planner.current_task.steps) - 1:
                     self.planner.current_task.current_step_index += 1
@@ -322,6 +372,14 @@ class EndToEndAgentRunner:
                     self.planner.replan_task(task, task.current_step_index, current_elements, active_url, f"Unmet dependencies: {unmet_deps}")
 
             # 4. Execute Single Turn
+            if task.current_step_index < len(task.steps):
+                c_step = task.steps[task.current_step_index]
+                self.events.task_step_started(
+                    task_id=task.task_id,
+                    step_id=c_step.id,
+                    description=c_step.description
+                )
+
             turn_res = self.run_single_turn(
                 sanitized_elements=current_elements,
                 current_url=active_url,

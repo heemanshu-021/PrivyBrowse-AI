@@ -1278,8 +1278,25 @@ PrivyBrowse-AI operates as a continuous, verified **multi-step, multi-page auton
 
 ---
 
-## 24. Performance Telemetry & Benchmarking
+## 24. Observability, Real-Time Monitoring & Telemetry
 
+PrivyBrowse AI includes a structured, real-time on-device observability and event streaming architecture connecting the entire execution stack:
+
+$$\text{Real Browser} \longleftrightarrow \text{Extension} \longleftrightarrow \text{Backend} \longleftrightarrow \text{Agent Planner} \longleftrightarrow \text{Event Bus} \xrightarrow{\text{SSE}} \text{Dashboard}$$
+
+### Observability Event Bus & Ring Buffer (`backend/observability/event_bus.py`)
+* **Thread-Safe In-Memory Ring Buffer**: Configured for 500 max retention with strict FIFO eviction to guarantee zero unbounded memory growth.
+* **Monotonic Sequence Numbering (`seq_id`)**: Every event receives an incrementing integer ID ($1, 2, 3, \dots$) enabling clients to detect missing frames and paginate queries (`since_seq`).
+* **Automatic In-Flight Credential Sanitization (`sanitize_value`)**: Recursively strips API key prefixes (`sk-`, `ghp_`), Indian Aadhaar (12-digit), PAN (10-char alphanumeric), Credit Card numbers (16-digit), and passwords before any event is published or stored.
+* **Pub-Sub Async Event Streaming**: Asynchronous queues feed Server-Sent Events (SSE) connections to the frontend dashboard.
+
+### Real-Time Monitoring Endpoints (`backend/main.py`)
+* `GET /api/events/stream`: Server-Sent Events (SSE) live push stream (`text/event-stream`) with automatic keep-alive heartbeats and reconnect handling.
+* `GET /api/events`: Query historical events with multidimensional filtering (`component`, `severity`, `task_id`, `since_seq`, `limit`).
+* `GET /api/dashboard/overview`: Aggregated instant snapshot (`DashboardSnapshot`) providing live system health, active task step graph, browser context, privacy metrics, security events, and performance latency distributions.
+* `GET /api/system/health`: Live connectivity evaluation of backend daemon, Chrome extension, browser tab, OCR engine, and event stream.
+
+### Performance Telemetry & Benchmarks
 * **Perception Latency**: **1.97 ms** (Target $<50\text{ ms}$)
 * **PII Detection Latency**: **0.40 ms** (Target $<15\text{ ms}$)
 * **Planning Latency**: **0.15 ms** (Target $<10\text{ ms}$)
@@ -1292,15 +1309,28 @@ PrivyBrowse-AI operates as a continuous, verified **multi-step, multi-page auton
 ## 25. Testing & Verification Suites
 
 ```bash
-# All 8 Test Suites Passing (100% Pass Rate):
-1. python tests/test_security_adversarial.py  # 15/15 Adversarial Attacks Blocked (100%)
-2. python tests/test_benchmarks.py            # Performance distributions & Score 99.0/100
-3. python tests/test_execution.py             # Atomic browser actions & Page change signals
-4. python tests/test_agent.py                 # State machine, Candidate generator, Scoring
-5. python tests/test_privacy.py               # Indian PII rules, Visual redactor, Zero-leak gate
-6. python tests/test_perception.py            # OpenCV detector, Tesseract OCR, Context fuser
-7. python tests/test_extension.py             # Manifest V3 extension bridge & IPC
-8. python tests/verify_backend.py             # Core FastAPI daemon sanity checks
+# All 21 Test Suites Passing (100% Pass Rate across 180+ tests):
+1.  python tests/verify_backend.py                         # Core FastAPI daemon sanity checks
+2.  python tests/test_agent.py                            # State machine, Candidate generator, Scoring
+3.  python tests/test_agent_closed_loop_real_browser.py   # Closed-loop planner on live browser pages
+4.  python tests/test_benchmarks.py                       # Performance distributions & Score 99.0/100
+5.  python tests/test_context_sync.py                     # Browser context manager, DOM fingerprints, Scroll
+6.  python tests/test_context_sync_real_browser.py        # Real browser tab switching & navigation sync
+7.  python tests/test_execution.py                        # Atomic browser actions & Page change signals
+8.  python tests/test_extension.py                        # Manifest V3 extension bridge & IPC
+9.  python tests/test_multistep_task.py                   # 23 multi-step task state & dependency tests
+10. python tests/test_multistep_real_browser.py           # 5 real multi-page task workflows
+11. python tests/test_perception.py                       # OpenCV detector, Tesseract OCR, Context fuser
+12. python tests/test_perception_real_browser.py          # Real DOM + visual perception benchmarks
+13. python tests/test_privacy.py                          # Indian PII rules, Visual redactor, Zero-leak gate
+14. python tests/test_privacy_real_browser.py             # Real privacy evaluation portals
+15. python tests/test_security_adversarial.py             # 15/15 Adversarial Attacks Blocked (100%)
+16. python tests/test_security_hardening.py               # Threat boundaries, DOM attribute sanitization
+17. python tests/test_security_real_browser.py            # Live prompt injection & phishing defense
+18. python tests/test_verification_recovery.py            # Evidence-based verification & bounded recovery
+19. python tests/test_verification_recovery_real_browser.py # Real browser action verification & stall recovery
+20. python tests/test_observability.py                    # 20 Event bus, Ring buffer, Sanitization & API tests
+21. python tests/test_observability_real_browser.py       # 5 Real browser event stream & monitoring scenarios
 ```
 
 ---

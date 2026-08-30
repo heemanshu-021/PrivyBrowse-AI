@@ -9,6 +9,7 @@ import html
 import unicodedata
 from typing import Dict, Any, List, Tuple, Optional
 from backend.security.schemas import ThreatLevel, PromptInjectionScanResult, TrustLevel
+from backend.observability.publisher import global_event_publisher
 
 
 class InjectionGuard:
@@ -154,6 +155,12 @@ class InjectionGuard:
             sanitized = pattern.sub("[NEUTRALIZED_INDIRECT_INJECTION]", sanitized)
         for pattern, _ in self.suspicious_patterns:
             sanitized = pattern.sub("[NEUTRALIZED_PROMPT]", sanitized)
+
+        if has_inj:
+            global_event_publisher.prompt_injection_detected(
+                threat_level=threat.value,
+                matched_patterns=all_matches
+            )
 
         return PromptInjectionScanResult(
             has_injection=has_inj,
