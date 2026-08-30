@@ -1,4 +1,6 @@
 // PrivyBrowse AI - Content Script
+// Real DOM extraction, MutationObserver, SPA Navigation & Action Execution
+
 const SENSITIVE_PATTERNS = [
   /password/i,
   /passwd/i,
@@ -135,18 +137,129 @@ function extractNormalizedDOM() {
 }
 
 function getPageMetadata() {
+  const docEl = document.documentElement || document.body || {};
+  const scrollY = window.scrollY || window.pageYOffset || 0;
+  const scrollX = window.scrollX || window.pageXOffset || 0;
+  const docH = docEl.scrollHeight || window.innerHeight || 1080;
+  const docW = docEl.scrollWidth || window.innerWidth || 1920;
+  const vpW = window.innerWidth || docEl.clientWidth || 1920;
+  const vpH = window.innerHeight || docEl.clientHeight || 1080;
+
   return {
     url: window.location.href,
     hostname: window.location.hostname || 'localhost',
     title: document.title || 'Untitled Webpage',
     viewport: {
-      width: window.innerWidth || document.documentElement.clientWidth,
-      height: window.innerHeight || document.documentElement.clientHeight
+      width: vpW,
+      height: vpH
+    },
+    scroll: {
+      x: scrollX,
+      y: scrollY,
+      scrollX: scrollX,
+      scrollY: scrollY,
+      documentWidth: docW,
+      documentHeight: docH,
+      maxScrollY: Math.max(0, docH - vpH)
     },
     devicePixelRatio: window.devicePixelRatio || 1,
     timestamp: new Date().toISOString()
   };
 }
+
+// -------------------------------------------------------------
+// DYNAMIC DOM MUTATION & SPA ROUTE MONITORING
+// -------------------------------------------------------------
+
+let mutationDebounceTimer = null;
+const DEBOUNCE_MS = 250;
+
+function handleMeaningfulDOMMutation() {
+  if (mutationDebounceTimer) {
+    clearTimeout(mutationDebounceTimer);
+  }
+  mutationDebounceTimer = setTimeout(() => {
+    try {
+      const elements = extractNormalizedDOM();
+      const page = getPageMetadata();
+      chrome.runtime.sendMessage({
+        type: "DOM_MUTATED",
+        payload: {
+          url: page.url,
+          elements,
+          elementCount: elements.length,
+          timestamp: new Date().toISOString()
+        }
+      }).catch(() => {});
+    } catch (e) {
+      // Content script context invalidated on navigation
+    }
+  }, DEBOUNCE_MS);
+}
+
+// Start MutationObserver on document body
+if (document.body) {
+  const observer = new MutationObserver((mutations) => {
+    let hasMeaningfulChange = false;
+    for (const m of mutations) {
+      if (m.type === 'childList' && (m.addedNodes.length > 0 || m.removedNodes.length > 0)) {
+        hasMeaningfulChange = true;
+        break;
+      }
+      if (m.type === 'attributes' && ['class', 'style', 'hidden', 'disabled', 'value'].includes(m.attributeName)) {
+        hasMeaningfulChange = true;
+        break;
+      }
+    }
+    if (hasMeaningfulChange) {
+      handleMeaningfulDOMMutation();
+    }
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class', 'style', 'hidden', 'disabled', 'value']
+  });
+}
+
+// Proxy SPA History APIs (pushState / replaceState)
+(function proxyHistoryAPI() {
+  const originalPushState = history.pushState;
+  const originalReplaceState = history.replaceState;
+
+  function notifySPARoute() {
+    setTimeout(() => {
+      try {
+        const page = getPageMetadata();
+        chrome.runtime.sendMessage({
+          type: "SPA_ROUTED",
+          payload: {
+            url: page.url,
+            title: page.title,
+            timestamp: new Date().toISOString()
+          }
+        }).catch(() => {});
+      } catch (e) {}
+    }, 50);
+  }
+
+  history.pushState = function(...args) {
+    const res = originalPushState.apply(this, args);
+    notifySPARoute();
+    return res;
+  };
+
+  history.replaceState = function(...args) {
+    const res = originalReplaceState.apply(this, args);
+    notifySPARoute();
+    return res;
+  };
+
+  window.addEventListener('popstate', notifySPARoute);
+  window.addEventListener('hashchange', notifySPARoute);
+})();
 
 function resolveElement(target) {
   if (target.elementId) {
@@ -177,7 +290,6 @@ async function executeSafeAction(request) {
   const { action, action_id, target, text, key, scrollDelta } = request;
   const timestamp = new Date().toISOString();
 
-  // Helper to include action_id in all responses
   function makeResult(result) {
     if (action_id) result.action_id = action_id;
     return result;
@@ -194,7 +306,6 @@ async function executeSafeAction(request) {
     const scrollYBefore = window.scrollY;
     const scrollXBefore = window.scrollX;
     window.scrollBy({ top: dy, left: dx, behavior: 'smooth' });
-    // Wait for scroll stabilization
     await new Promise(r => setTimeout(r, 150));
     const actualDeltaY = window.scrollY - scrollYBefore;
     const actualDeltaX = window.scrollX - scrollXBefore;
@@ -262,7 +373,6 @@ async function executeSafeAction(request) {
     const valueToSet = text || '';
 
     if (targetElement instanceof HTMLInputElement || targetElement instanceof HTMLTextAreaElement) {
-      // Use native prototype setter for React/Vue/Angular controlled input compatibility
       const proto = targetElement instanceof HTMLTextAreaElement
         ? HTMLTextAreaElement.prototype
         : HTMLInputElement.prototype;
@@ -272,7 +382,6 @@ async function executeSafeAction(request) {
       } else {
         targetElement.value = valueToSet;
       }
-      // Dispatch React-compatible synthetic events
       targetElement.dispatchEvent(new Event('input', { bubbles: true }));
       targetElement.dispatchEvent(new Event('change', { bubbles: true }));
     } else if (targetElement.isContentEditable) {
@@ -281,7 +390,6 @@ async function executeSafeAction(request) {
       targetElement.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    // Verify the value was actually applied
     let verifiedValue;
     if (targetElement instanceof HTMLInputElement || targetElement instanceof HTMLTextAreaElement) {
       verifiedValue = targetElement.value;

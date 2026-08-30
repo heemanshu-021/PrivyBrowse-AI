@@ -26,6 +26,10 @@ class PendingAction(BaseModel):
     """An action queued for dispatch to the Chrome extension."""
     action_id: str
     action_type: str  # CLICK, TYPE, SCROLL, PRESS_KEY, NAVIGATE
+    tab_id: Optional[int] = None
+    expected_url: Optional[str] = None
+    page_identity: Optional[str] = None
+    dom_fingerprint: Optional[str] = None
     target_id: Optional[str] = None
     target: Optional[Dict[str, Any]] = None  # {x, y} coordinates
     text: Optional[str] = None

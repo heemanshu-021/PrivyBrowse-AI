@@ -138,6 +138,37 @@ class ActionExecutor:
                 metadata={"validation_reason": v_res.reason}
             )
 
+        # 1B. Stale Perception & Tab State Verification Gate
+        from backend.browser.context_manager import global_browser_context_manager
+        expected_tab_id = action_json.get("tab_id")
+        expected_url = current_url or action_json.get("expected_url") or action_json.get("url")
+        expected_dom_fp = action_json.get("dom_fingerprint")
+        expected_doc_id = action_json.get("document_id")
+
+        if expected_tab_id is not None or expected_dom_fp is not None:
+            is_valid, err_code, err_reason = global_browser_context_manager.validate_action_context(
+                expected_tab_id=expected_tab_id,
+                expected_url=expected_url,
+                expected_dom_fingerprint=expected_dom_fp,
+                expected_document_id=expected_doc_id
+            )
+            if not is_valid and err_code in ("TAB_MISMATCH", "STALE_NAVIGATION", "DOM_MUTATION_MISMATCH", "STALE_DOCUMENT"):
+                return ActionResult(
+                    success=False,
+                    action_id=action_id,
+                    action=action_name,
+                    target_id=target_id,
+                    duration_ms=round((time.perf_counter() - t_start) * 1000.0, 2),
+                    timestamp=now_iso,
+                    status=ExecutionStatus.FAILED,
+                    error=ActionError(
+                        code=err_code,
+                        message=f"Action rejected: {err_reason}",
+                        details={"expected_tab_id": expected_tab_id, "expected_url": expected_url}
+                    ),
+                    metadata={"stale_perception": True, "re_perception_required": True}
+                )
+
         # 2. Action Routing & Execution
         try:
             if action_name == "CLICK":

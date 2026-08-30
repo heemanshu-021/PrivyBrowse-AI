@@ -847,6 +847,86 @@ Set `PRIVYBROWSE_SIMULATION_MODE=true` env var or `ActionExecutor(simulation_mod
 | `extension/content.js` | React controlled input (native setter), scroll verification, action_id passthrough, value verification | Reliable real DOM interaction | Content script |
 | `tests/test_execution.py` | Updated 8 existing tests for `simulation_mode=True`, added 12 new bridge tests | Comprehensive bridge testing | Test suite |
 
+### 18B. Browser Context, Navigation & State Synchronization
+
+The **Browser Context Manager** (`backend/browser/context_manager.py`) ensures that the agent planner and executor always maintain a real-time, validated understanding of the active browser state across navigations, tab switches, dynamic SPA transitions, DOM mutations, and scroll updates.
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    REAL CHROME BROWSER                      │
+│   Tab Activation │ Navigation │ SPA pushState │ Mutations   │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+               Chrome Extension Event Listeners
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 EXTENSION BACKGROUND WORKER                 │
+│   tabs.onActivated │ tabs.onUpdated │ tabs.onRemoved       │
+│   POST /api/browser/event ──► Notification Stream           │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│               BROWSER CONTEXT MANAGER (Backend)             │
+│   BrowserContextManager (backend/browser/context_manager.py)│
+│   ├── Tracks Active Tab ID & Window ID                      │
+│   ├── Computes Page Identity (tab, url, document_id)        │
+│   ├── Computes Structural DOM Fingerprint (element layout)  │
+│   ├── Tracks Scroll Geometry (scrollX, scrollY, viewport)   │
+│   └── Validates Stale Perception before Action Dispatch     │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+              Pre-Execution Stale Perception Guard
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 ACTION EXECUTOR & AGENT RUNNER              │
+│   1. Validate Action Tab == Active Browser Tab              │
+│   2. Validate URL & DOM Fingerprint Match Perception State  │
+│   3. IF MATCH: Execute Action                               │
+│   4. IF MISMATCH: Reject with TAB_MISMATCH / STALE_CONTEXT  │
+│                   ──► Trigger Re-observation & Replan       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Page Identity & Structural DOM Fingerprinting
+
+* **PageIdentity**: Composite object tracking `tab_id`, `window_id`, `url`, `hostname`, `path`, `title`, and `document_id` (`doc-<hash>`).
+* **DOMFingerprint**: Fast structural SHA-256 hash computed over visible interactive element IDs, types, and grid-quantized bounding boxes. Instantly detects modals, removed elements, and dynamic SPA renders without requiring full visual re-rendering.
+* **State Equality (`is_same_page_state`)**: Compares Tab ID, URL, Document ID, and DOM Fingerprint to accurately distinguish between unchanged and mutated states.
+
+#### Event-Driven Synchronization Mechanisms
+
+1. **Tab Switching**: `chrome.tabs.onActivated` emits `TAB_SWITCHED` event. If the user focuses a different tab, actions targeting the previous tab are rejected with `TAB_MISMATCH`.
+2. **Navigation & Reloads**: `chrome.tabs.onUpdated` and `webNavigation` emit `NAVIGATED`. The previous document state is invalidated.
+3. **SPA Client-Side Route Changes**: `content.js` proxies `history.pushState` and `history.replaceState` and listens to `popstate` / `hashchange`, emitting `SPA_ROUTED`.
+4. **Dynamic DOM Mutations**: `MutationObserver` on `document.body` debounces interactive DOM updates (250ms) and emits `DOM_MUTATED`, updating the context element cache and fingerprint.
+5. **Scroll Geometry**: Captures `scrollX`, `scrollY`, `documentHeight`, `documentWidth`, and `maxScrollY` on every scroll action and event.
+
+#### Stale Perception Protection Invariant
+
+Before any action is dispatched through the executor or bridge:
+* The system queries `validate_action_context(expected_tab_id, expected_url, expected_dom_fingerprint)`.
+* If a mismatch is detected (`TAB_MISMATCH`, `STALE_NAVIGATION`, `DOM_MUTATION_MISMATCH`), the action is immediately blocked before touching the DOM, and `AgentRunner` triggers an automatic re-observation and re-planning cycle.
+
+#### Files for Browser Context Synchronization
+
+| File | What Changed | Why | Role in System |
+| :--- | :--- | :--- | :--- |
+| `backend/browser/context_manager.py` | **[NEW]** `BrowserContext`, `PageIdentity`, `ScrollState`, `DOMFingerprint`, `BrowserContextManager` | Core thread-safe state synchronization and stale perception validation | Browser state management |
+| `backend/browser/__init__.py` | **[NEW]** Exported context models and manager | Module exports | Package initialization |
+| `extension/background.js` | Added `tabs.onActivated`, `tabs.onUpdated`, `tabs.onRemoved`, `windows.onFocusChanged`, target tab validation | Extension event tracking | Extension background |
+| `extension/content.js` | Added `MutationObserver` with debounce, SPA history proxies, scroll geometry, DOM fingerprint | Real DOM mutation & route tracking | Content script |
+| `backend/actions/browser_bridge.py` | Added `tab_id`, `expected_url`, `dom_fingerprint` to `PendingAction` | Target tab and state metadata propagation | Bridge protocol |
+| `backend/actions/executor.py` | Pre-execution stale perception & tab state verification gate | Intercept actions on stale layouts | Action executor |
+| `backend/actions/agent_runner.py` | Automatic re-observation & replanning on stale perception signals | Self-healing multi-turn agent loop | Agent runner |
+| `backend/main.py` | Added `/api/browser/event`, `/api/browser/state` routes, enhanced `/api/browser/context` | REST API for context and lifecycle events | API routing |
+| `tests/test_context_sync.py` | **[NEW]** 16 comprehensive unit & integration tests | Verification of context lifecycle and stale defenses | Unit test suite |
+| `tests/test_context_sync_real_browser.py` | **[NEW]** 3 real browser tests (Navigation, Modal, Scroll) | Verification of real browser synchronization | Browser test suite |
+
 ---
 
 ## 19. Action Validation & Risk Analysis

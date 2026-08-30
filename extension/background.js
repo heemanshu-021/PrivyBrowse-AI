@@ -1,4 +1,6 @@
 // PrivyBrowse AI - Manifest V3 Background Service Worker
+// Real Browser Context, Navigation Tracking & Action Execution Bridge
+
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000/api";
 
 const RESTRICTED_PREFIXES = [
@@ -19,6 +21,85 @@ function isRestrictedUrl(url) {
   if (!url) return true;
   return RESTRICTED_PREFIXES.some(prefix => url.startsWith(prefix));
 }
+
+// -------------------------------------------------------------
+// EVENT-DRIVEN TAB & NAVIGATION TRACKING
+// -------------------------------------------------------------
+
+async function notifyBrowserEvent(eventType, data) {
+  try {
+    const payload = {
+      event: eventType,
+      timestamp: new Date().toISOString(),
+      ...data
+    };
+    await fetch(`${DEFAULT_BACKEND_URL}/browser/event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  } catch (err) {
+    // Backend offline / silent recovery
+    console.debug(`[PrivyBrowse Event] Failed to dispatch ${eventType}:`, err.message);
+  }
+}
+
+// 1. Tab Activation (Switching tabs)
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  console.log(`[PrivyBrowse] Tab activated: ${activeInfo.tabId} in window ${activeInfo.windowId}`);
+  try {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    await notifyBrowserEvent("TAB_SWITCHED", {
+      tabId: activeInfo.tabId,
+      windowId: activeInfo.windowId,
+      url: tab.url,
+      title: tab.title
+    });
+  } catch (e) {
+    await notifyBrowserEvent("TAB_SWITCHED", {
+      tabId: activeInfo.tabId,
+      windowId: activeInfo.windowId
+    });
+  }
+});
+
+// 2. Tab Navigation & Loading State Updates
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url) {
+    console.log(`[PrivyBrowse] Tab ${tabId} navigated to: ${changeInfo.url}`);
+    notifyBrowserEvent("NAVIGATED", {
+      tabId,
+      url: changeInfo.url,
+      title: tab.title,
+      status: changeInfo.status || tab.status
+    });
+  } else if (changeInfo.status) {
+    notifyBrowserEvent("STATUS_CHANGED", {
+      tabId,
+      url: tab.url,
+      status: changeInfo.status
+    });
+  }
+});
+
+// 3. Tab Closed
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  console.log(`[PrivyBrowse] Tab removed: ${tabId}`);
+  notifyBrowserEvent("TAB_CLOSED", {
+    tabId,
+    windowId: removeInfo.windowId,
+    isWindowClosing: removeInfo.isWindowClosing
+  });
+});
+
+// 4. Window Focus Changed
+chrome.windows.onFocusChanged.addListener((windowId) => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) {
+    notifyBrowserEvent("WINDOW_BLURRED", {});
+  } else {
+    notifyBrowserEvent("WINDOW_FOCUSED", { windowId });
+  }
+});
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log("[PrivyBrowse AI] Service Worker successfully installed.");
@@ -55,6 +136,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .then(result => sendResponse({ success: true, result }))
       .catch(err => sendResponse({ success: false, error: err.message }));
     return true;
+  }
+
+  if (message.type === "DOM_MUTATED") {
+    notifyBrowserEvent("DOM_MUTATED", message.payload || {});
+    sendResponse({ success: true });
+    return false;
+  }
+
+  if (message.type === "SPA_ROUTED") {
+    notifyBrowserEvent("SPA_ROUTED", message.payload || {});
+    sendResponse({ success: true });
+    return false;
   }
 
   if (message.type === "START_POLLING") {
@@ -120,7 +213,7 @@ async function orchestrateAnalysis() {
   try {
     domResponse = await chrome.tabs.sendMessage(tabId, { type: "GET_PAGE_CONTEXT" });
   } catch {
-    // Incase tab was loaded before extension
+    // In case tab was loaded before extension
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
@@ -140,11 +233,16 @@ async function orchestrateAnalysis() {
 
   // 3. Assemble Unified Browser Context
   const browserContext = {
+    tabId,
+    windowId: tab.windowId,
     page: {
+      tabId,
+      windowId: tab.windowId,
       url: tab.url || page.url,
       hostname: page.hostname,
       title: tab.title || page.title,
       viewport: page.viewport,
+      scroll: page.scroll,
       devicePixelRatio: page.devicePixelRatio,
       timestamp: new Date().toISOString()
     },
@@ -190,12 +288,6 @@ async function dispatchAction(actionPayload) {
 
 /**
  * Polls the backend for pending actions and dispatches them to the active tab's content script.
- * This is the core communication loop for the real browser action execution bridge.
- *
- * Flow:
- *   1. GET /api/action/pending → retrieve next queued action
- *   2. Forward action to content.js via chrome.tabs.sendMessage
- *   3. POST /api/action/ack → report execution result back to backend
  */
 async function pollPendingActions() {
   try {
@@ -225,12 +317,23 @@ async function pollPendingActions() {
     try {
       tab = await getActiveTab();
     } catch (tabErr) {
-      // No valid tab available — report failure
       await postAcknowledgement(actionId, {
         success: false,
         action_type: actionType,
         error: tabErr.message,
         error_code: "NO_ACTIVE_TAB"
+      });
+      return;
+    }
+
+    // Verify Target Tab Safety
+    if (action.tab_id !== undefined && action.tab_id !== null && action.tab_id !== tab.id) {
+      console.warn(`[PrivyBrowse Bridge] Target tab mismatch: action targeting tab ${action.tab_id} but active is ${tab.id}`);
+      await postAcknowledgement(actionId, {
+        success: false,
+        action_type: actionType,
+        error: `Action targeted tab ${action.tab_id}, but current active tab is ${tab.id}`,
+        error_code: "TAB_MISMATCH"
       });
       return;
     }
@@ -294,12 +397,9 @@ async function pollPendingActions() {
     };
 
     await postAcknowledgement(actionId, ackPayload);
-
     console.log(`[PrivyBrowse Bridge] Action ${actionId} completed: ${ackPayload.success ? 'SUCCESS' : 'FAILED'}`);
 
   } catch (err) {
-    // Silently handle polling errors (backend offline, network issues)
-    // The bridge will naturally recover on the next poll cycle
     console.debug("[PrivyBrowse Bridge] Poll cycle error:", err.message);
   }
 }
@@ -336,7 +436,7 @@ async function postAcknowledgement(actionId, payload) {
  */
 function startPolling() {
   if (pollingIntervalId !== null) {
-    return; // Already polling
+    return;
   }
   pollingIntervalId = setInterval(pollPendingActions, POLL_INTERVAL_MS);
   console.log("[PrivyBrowse Bridge] Action polling started (every " + POLL_INTERVAL_MS + "ms)");

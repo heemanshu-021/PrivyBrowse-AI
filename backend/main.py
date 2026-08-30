@@ -22,6 +22,7 @@ from backend.actions.browser_bridge import BrowserActionBridge, ActionAcknowledg
 
 # Import new modular perception pipeline
 from backend.perception.core.pipeline import PerceptionPipeline
+from backend.browser.context_manager import global_browser_context_manager, BrowserContext
 
 app = FastAPI(
     title="PrivyBrowse AI - On-Device Perception Backend",
@@ -216,18 +217,43 @@ def get_telemetry_metrics():
 
 @app.post("/api/browser/context")
 def receive_browser_context(req: BrowserContextSchema):
+    context_dict = req.model_dump()
+    ctx = global_browser_context_manager.update_context(context_dict)
+
     latest_browser_context["connected"] = True
     latest_browser_context["last_updated"] = req.capture.get("timestamp")
     latest_browser_context["page"] = req.page
     latest_browser_context["element_count"] = len(req.elements)
     latest_browser_context["screenshot_available"] = bool(req.screenshot.get("available"))
-    latest_browser_context["raw_context"] = req.model_dump()
+    latest_browser_context["raw_context"] = context_dict
 
     return {
         "success": True,
         "message": "Browser context successfully ingested into local perception engine.",
+        "context_id": ctx.context_id,
+        "tab_id": ctx.tab_id,
+        "dom_fingerprint": ctx.dom_fingerprint.hash,
         "element_count": len(req.elements),
         "url": req.page.get("url")
+    }
+
+@app.post("/api/browser/event")
+def receive_browser_event(req: Dict[str, Any]):
+    ev_type = req.get("event", "UNKNOWN")
+    changed, reason = global_browser_context_manager.handle_browser_event(ev_type, req)
+    return {
+        "success": True,
+        "event": ev_type,
+        "state_changed": changed,
+        "reason": reason,
+        "active_tab_id": global_browser_context_manager.active_tab_id
+    }
+
+@app.get("/api/browser/state")
+def get_browser_state():
+    return {
+        "success": True,
+        **global_browser_context_manager.get_state_summary()
     }
 
 @app.get("/api/browser/status")

@@ -107,15 +107,10 @@ class EndToEndAgentRunner:
         )
 
         # 4. VERIFY outcome using real execution result
-        # When in real mode, exec_res contains actual browser acknowledgement data.
-        # We no longer fabricate simulated_next_elements — instead we evaluate
-        # the real execution outcome and flag re-perception when needed.
-        re_perception_required = exec_res.page_changed
+        re_perception_required = exec_res.page_changed or exec_res.metadata.get("re_perception_required", False)
+        if exec_res.error and exec_res.error.code in ("TAB_MISMATCH", "STALE_NAVIGATION", "DOM_MUTATION_MISMATCH", "STALE_DOCUMENT", "STALE_TARGET"):
+            re_perception_required = True
 
-        # Build post-action elements based on real outcome:
-        # If the action reported success and the page changed, the current elements
-        # are now stale and re-perception should be triggered by the caller.
-        # For verification, we pass the best-available state.
         post_action_elements = list(sanitized_elements)
         if exec_res.success and candidate.action == "TYPE" and candidate.target_id:
             # Reflect the typed value from the real execution result for verification
