@@ -437,33 +437,54 @@ def score_candidates(self, candidates, objective, fused_elements, history) -> Li
 
 ---
 
-## 12. Computer Vision Engine
+## 12. Computer Vision Engine (OpenCV)
 
+* **Source File**: `backend/perception/detectors/visual_detector.py` & `backend/perception/preprocessing/image_processor.py`.
 * **Library**: OpenCV (`opencv-python-headless 4.10.0.84`).
-* **Pipeline**:
-  1. Grayscale conversion: `cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)`.
-  2. Gaussian Blur: `cv2.GaussianBlur(gray, (5, 5), 0)`.
-  3. Otsu's Adaptive Thresholding: `cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)`.
-  4. Contour Extraction: `cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)`.
-  5. Bounding Box Filtering: Filters contours smaller than $15\times 15\text{ px}$ or larger than $95\%$ of the screen.
+* **On-Device Pipeline**:
+  1. Image Decoding & Color Space: Decodes PNG/JPEG bytes via `cv2.imdecode()` to BGR numpy array.
+  2. Grayscale & Contrast Optimization: `cv2.cvtColor()` with Gaussian blur kernel $(5, 5)$.
+  3. Adaptive Thresholding: `cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)` to handle both light and dark UI themes dynamically.
+  4. Morphological Closing: Rectangular structuring element $(7, 3)$ merges fragmented input/button borders.
+  5. Contour Tree Extraction: `cv2.findContours(closed, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)` extracts full parent/child contour hierarchies.
+  6. Geometric Heuristics: Classifies contours by aspect ratio, area ratio, and pixel dimensions into `BUTTON`, `INPUT`, `TEXTAREA`, `CHECKBOX`, `ICON`, `HEADING`, `CARD`, `IMAGE`.
+  7. Edge Density Verification: Computes Canny edge density within the bounding box to boost confidence for well-defined UI controls ($+0.05$) or penalize noise ($-0.10$).
+  8. Non-Maximum Suppression: Suppresses overlapping duplicate contours with $\text{IoU} \ge 0.45$.
 
 ---
 
 ## 13. OCR Engine & Layout Extraction
 
-* **Library**: `pytesseract 0.3.13` wrapping local Tesseract binary.
-* **Method**: `pytesseract.image_to_data(image, output_type=Output.DICT)`.
-* **Output**: Extracts words, bounding boxes $[x, y, w, h]$, and confidence values.
-* **Why OCR over Cloud Vision?**: Executes in **$0.8\text{–}2.5\text{ ms}$** locally with **zero data egress**.
+* **Source File**: `backend/perception/ocr/tesseract_engine.py` & `backend/perception/detectors/text_detector.py`.
+* **Library**: `pytesseract 0.3.13` wrapping local on-device Tesseract binary (`eng.traineddata`, ~30 MB).
+* **Execution Flow**:
+  1. Preprocessing: Binarization and contrast adjustment for optimal optical character recognition.
+  2. Per-Word Extraction: `pytesseract.image_to_data(pil_img, output_type=Output.DICT)`.
+  3. Line-Level Grouping: Groups words into coherent text lines by `(block_num, par_num, line_num)` to avoid fragmented character bounding boxes.
+  4. Semantic Typing: Text blocks with height $\ge 20\text{ px}$, confidence $\ge 0.7$, and $\le 8$ words are classified as `HEADING`; otherwise `TEXT`.
+  5. Graceful Fallback (`DOM_TEXT_PROXY`): If the system Tesseract binary is not installed on the host OS, the pipeline gracefully extracts visible text from DOM elements with `sources=["DOM_TEXT_PROXY"]` without crashing or fabricating fake OCR.
 
 ---
 
-## 14. Multi-Source Perception Fusion
+## 14. Multi-Source Perception Fusion & Coordinate System
 
-* **Formula**:
-  $$\text{Confidence} = 0.40 \cdot C_{\text{DOM}} + 0.35 \cdot C_{\text{OCR}} + 0.25 \cdot C_{\text{CV}}$$
-* **Matching**: Bounding boxes matched via Intersection over Union ($\text{IoU} \ge 0.30$).
-* **Disagreement Handling**: If DOM and Vision disagree, the Context Fuser retains the visual bounding box while applying DOM semantic tags (`<button>`, `<input>`).
+* **Source File**: `backend/perception/fusion/context_fuser.py` & `backend/perception/core/coordinator.py`.
+* **Fusion Strategy**:
+  1. **DOM Ground Truth**: Uses DOM nodes as the structural ground truth anchor.
+  2. **IoU Association**: Matches visual contours and OCR text blocks to DOM elements using $\text{IoU} \ge 0.35$.
+  3. **Visual-Only Ingestion**: Retains vision-only detections (e.g. custom canvas controls, SVG icons) not present in the DOM tree.
+  4. **Stable Identifier Assignment**: Assigns stable, deterministic IDs (`pb-element-001`, `pb-element-002`, ...).
+* **Multi-Source Confidence Formula**:
+  $$\text{Confidence} = 0.35 \cdot C_{\text{DOM}} + 0.30 \cdot C_{\text{OCR}} + 0.25 \cdot C_{\text{VISION}} + 0.10 \cdot C_{\text{GEOMETRY}}$$
+  * $C_{\text{DOM}}$: DOM presence structural reliability ($0.92$).
+  * $C_{\text{OCR}}$: Text recognition confirmation ($\ge 0.50$).
+  * $C_{\text{VISION}}$: Visual contour & edge density confidence.
+  * $C_{\text{GEOMETRY}}$: Bonus for high spatial agreement ($\text{IoU} \ge 0.60 \rightarrow 0.95$, $\text{IoU} \ge 0.40 \rightarrow 0.75$).
+  * Single-source penalty: $-10\%$ discount when detected by only one source.
+* **Coordinate Transformations**:
+  * Screenshot Space $\leftrightarrow$ Viewport Space: Handles Retina display device pixel ratio ($\text{DPR} = 2.0$) via `scale_x = viewport_width / screenshot_width`.
+  * Viewport Space $\leftrightarrow$ Document Space: Accounts for dynamic `scroll_x` and `scroll_y` offsets.
+  * Visibility Classification: Classifies elements as `VISIBLE`, `PARTIALLY_VISIBLE`, or `OFFSCREEN`.
 
 ---
 

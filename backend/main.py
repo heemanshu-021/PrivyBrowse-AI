@@ -136,7 +136,7 @@ class FullPerceptionRequest(BaseModel):
     viewport_width: Optional[int] = 0
     viewport_height: Optional[int] = 0
     device_pixel_ratio: Optional[float] = 1.0
-    dom_nodes: Optional[List[DOMNodeSchema]] = None
+    dom_nodes: Optional[List[Dict[str, Any]]] = None
     page_metadata: Optional[Dict[str, Any]] = None
     scroll_x: Optional[float] = 0.0
     scroll_y: Optional[float] = 0.0
@@ -236,10 +236,10 @@ def get_browser_status():
 
 @app.post("/api/perception/full")
 def run_full_perception(req: FullPerceptionRequest):
-    """Run the complete modular perception pipeline."""
+    """Run the complete modular perception pipeline on-device."""
     dom_dicts = None
     if req.dom_nodes:
-        dom_dicts = [n.model_dump(by_alias=True) for n in req.dom_nodes]
+        dom_dicts = [n.model_dump(by_alias=True) if hasattr(n, "model_dump") else n for n in req.dom_nodes]
 
     page_meta = req.page_metadata or {}
 
@@ -262,6 +262,47 @@ def run_full_perception(req: FullPerceptionRequest):
         metrics_store["last_ocr_latency"] = result.latency.ocr_ms / 1000.0
 
     # Return both the new structured result and legacy-compatible fused_elements
+    legacy_elements = [e.to_legacy_dict() for e in result.elements]
+
+    return {
+        "success": result.success,
+        "page": result.page.model_dump(),
+        "elements": [e.to_agent_dict() for e in result.elements],
+        "fused_elements": legacy_elements,
+        "summary": result.summary.model_dump(),
+        "latency": result.latency.model_dump(),
+        "coordinate_system": result.coordinate_system.model_dump(),
+        "timestamp": result.timestamp,
+        "warnings": result.warnings,
+        "error": result.error,
+    }
+
+@app.post("/api/perception/from-context")
+def run_perception_from_stored_context():
+    """Runs the full on-device perception pipeline on the latest browser context ingested from Chrome."""
+    if not latest_browser_context.get("connected") or not latest_browser_context.get("raw_context"):
+        raise HTTPException(status_code=400, detail="No active browser context ingested yet. Ensure the Chrome extension is active.")
+    
+    ctx = latest_browser_context["raw_context"]
+    screenshot_b64 = ctx.get("screenshot", {}).get("dataUrl", "")
+    page = ctx.get("page", {})
+    elements = ctx.get("elements", [])
+    viewport = page.get("viewport", {})
+    
+    result = perception_pipeline.run(
+        screenshot_b64=screenshot_b64,
+        viewport_width=viewport.get("width", 0),
+        viewport_height=viewport.get("height", 0),
+        device_pixel_ratio=page.get("devicePixelRatio", 1.0),
+        dom_nodes=elements,
+        page_metadata=page
+    )
+    
+    if result.success:
+        metrics_store["runs_count"] += 1
+        metrics_store["last_perception_latency"] = result.latency.visual_detection_ms / 1000.0
+        metrics_store["last_ocr_latency"] = result.latency.ocr_ms / 1000.0
+
     legacy_elements = [e.to_legacy_dict() for e in result.elements]
 
     return {

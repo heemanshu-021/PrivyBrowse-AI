@@ -68,10 +68,13 @@ class ContextFuser:
             if txt_idx is not None:
                 used_text.add(txt_idx)
 
-            # Resolve type: prefer DOM type, but vision can upgrade ELEMENT → BUTTON
+            # Resolve type: prefer DOM type, but vision can upgrade non-text ELEMENT → BUTTON/INPUT
             el_type = dom_el.type
             if el_type == "ELEMENT" and vis_el and vis_el.type in INTERACTIVE_TYPES:
-                el_type = vis_el.type
+                if not dom_el.text or dom_el.attributes.get("role"):
+                    el_type = vis_el.type
+                elif dom_el.text:
+                    el_type = "TEXT"
 
             # Resolve label: DOM text > OCR text > placeholder > aria-label
             label = dom_el.label

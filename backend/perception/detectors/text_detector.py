@@ -70,23 +70,41 @@ class TextDetector:
         elements: List[PerceivedElement] = []
 
         for idx, node in enumerate(dom_nodes):
-            text = node.get("text", "").strip()
+            if not isinstance(node, dict):
+                continue
+
+            text = str(node.get("text", "")).strip()
             if not text:
                 continue
 
             bbox_raw = node.get("bbox")
-            if not bbox_raw or not isinstance(bbox_raw, list) or len(bbox_raw) < 4:
+            if not bbox_raw:
                 continue
 
-            x1, y1, x2, y2 = bbox_raw[0], bbox_raw[1], bbox_raw[2], bbox_raw[3]
-            w = x2 - x1
-            h = y2 - y1
-            if w <= 0 or h <= 0:
+            bbox = None
+            if isinstance(bbox_raw, list) and len(bbox_raw) >= 4:
+                x1, y1, x2, y2 = float(bbox_raw[0]), float(bbox_raw[1]), float(bbox_raw[2]), float(bbox_raw[3])
+                w = x2 - x1
+                h = y2 - y1
+                if w > 0 and h > 0:
+                    bbox = BoundingBox(x=x1, y=y1, width=w, height=h)
+            elif isinstance(bbox_raw, dict):
+                x = float(bbox_raw.get("x", bbox_raw.get("left", 0)))
+                y = float(bbox_raw.get("y", bbox_raw.get("top", 0)))
+                w = float(bbox_raw.get("width", 0))
+                h = float(bbox_raw.get("height", 0))
+                if w <= 0 and "right" in bbox_raw:
+                    w = float(bbox_raw["right"]) - x
+                if h <= 0 and "bottom" in bbox_raw:
+                    h = float(bbox_raw["bottom"]) - y
+                if w > 0 and h > 0:
+                    bbox = BoundingBox(x=x, y=y, width=w, height=h)
+
+            if bbox is None:
                 continue
 
-            bbox = BoundingBox(x=x1, y=y1, width=w, height=h)
-
-            tag = node.get("tag_name", "").upper()
+            raw_tag = node.get("tag_name") or node.get("tag") or node.get("tagName") or ""
+            tag = str(raw_tag).upper()
             el_type = "HEADING" if tag in ("H1", "H2", "H3", "H4", "H5", "H6") else "TEXT"
 
             elements.append(PerceivedElement(
@@ -102,7 +120,7 @@ class TextDetector:
                 sources=["DOM_TEXT_PROXY"],
                 attributes={
                     "tag_name": tag,
-                    "element_id": node.get("id", ""),
+                    "element_id": str(node.get("id", "")),
                 },
                 visibility="VISIBLE",
             ))
