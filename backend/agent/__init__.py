@@ -1,16 +1,20 @@
 # Agent package exports
 from backend.agent.schemas import (
     AgentState,
+    TaskState,
     ActionType,
     ObjectiveStatus,
+    StepStatus,
     RiskLevel,
     Objective,
+    TaskStep,
     CandidateAction,
     ValidationResult,
     VerificationResult,
     PlanTraceEntry,
     TaskConstraints,
-    AgentTask
+    AgentTask,
+    TaskResult
 )
 from backend.agent.state_machine import AgentStateMachine, InvalidStateTransitionError
 from backend.agent.decomposer import GoalDecomposer

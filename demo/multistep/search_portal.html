@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ISRO Mission Search Portal</title>
+    <style>
+        body { font-family: sans-serif; margin: 40px; background: #0f172a; color: #f8fafc; }
+        .card { background: #1e293b; padding: 24px; border-radius: 8px; max-width: 600px; }
+        input, button { padding: 8px 16px; margin: 8px 0; border-radius: 4px; border: 1px solid #475569; }
+        button { background: #3b82f6; color: white; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>ISRO Space Missions Portal</h2>
+        <p>Explore lunar, solar, and interplanetary scientific expeditions.</p>
+        <form action="/demo/multistep/search_results.html" method="GET">
+            <input type="text" id="search-input" name="q" placeholder="Search mission name..." />
+            <button type="submit" id="btn-search">Search Portal</button>
+        </form>
+    </div>
+</body>
+</html>

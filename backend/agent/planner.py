@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
 
 from backend.agent.schemas import (
-    AgentState, ActionType, Objective, ObjectiveStatus,
+    AgentState, ActionType, Objective, ObjectiveStatus, TaskStep,
     CandidateAction, ValidationResult, VerificationResult,
     PlanTraceEntry, AgentTask, TaskConstraints, RiskLevel
 )
@@ -50,28 +50,59 @@ class AgentPlanner:
     def create_task(
         self,
         goal: str,
-        constraints: Optional[TaskConstraints] = None
+        constraints: Optional[TaskConstraints] = None,
+        initial_elements: Optional[List[Dict[str, Any]]] = None,
+        current_url: str = ""
     ) -> AgentTask:
         """Creates a new structured AgentTask and decomposes it into sub-objectives."""
         self.state_machine.reset()
         self.memory.clear()
 
-        objectives = self.decomposer.decompose(goal)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if initial_elements:
+            steps = self.decomposer.decompose_with_context(goal, current_url=current_url, current_elements=initial_elements)
+        else:
+            steps = self.decomposer.decompose(goal)
+
         task_id = f"task-{int(time.time()*1000)%10000:04d}"
 
         task = AgentTask(
             task_id=task_id,
             goal=goal,
-            status=AgentState.IDLE,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            status=AgentState.PLANNED,
+            created_at=now_iso,
+            updated_at=now_iso,
             constraints=constraints or TaskConstraints(),
-            objectives=objectives,
-            current_objective_index=0
+            steps=steps,
+            current_step_index=0,
+            pending_steps=[s.id for s in steps],
+            completed_steps=[],
+            failed_steps=[]
         )
 
         self.current_task = task
         self.metrics["tasks_created"] += 1
         return task
+
+    def replan_task(
+        self,
+        task: AgentTask,
+        failed_step_index: int,
+        current_elements: List[Dict[str, Any]],
+        current_url: str = "",
+        failure_reason: str = ""
+    ) -> List[TaskStep]:
+        """Dynamically replans remaining sub-goals when context changes or a step fails."""
+        updated = self.decomposer.replan_remaining_steps(
+            task=task,
+            failed_step_index=failed_step_index,
+            current_elements=current_elements,
+            current_url=current_url,
+            failure_reason=failure_reason
+        )
+        task.updated_at = datetime.now(timezone.utc).isoformat()
+        task.pending_steps = [s.id for s in task.steps[task.current_step_index:]]
+        return updated
 
     def check_task_completion(
         self,
@@ -104,8 +135,25 @@ class AgentPlanner:
         if any(k in goal_lower for k in ["search", "find", "lookup"]):
             query_m = self.decomposer._extract_search_query(active_task.goal).lower()
             if query_m and query_m in page_text:
-                if any(w in page_text for w in ["result", "search results", "found", "articles", "showing"]):
-                    return True, f"Search results for '{query_m}' verified on page"
+                explicitly_requires_navigation = any(w in goal_lower for w in ["open", "select", "click", "read", "view article", "view detail", "open section", "open mission"])
+                pending_selection = any(
+                    s.semantic_intent == "select_result"
+                    for s in active_task.objectives[active_task.current_objective_index:]
+                )
+                matching_link_present = any(
+                    e.get("type") in ("LINK", "A") or e.get("tag") in ("A", "LINK") or e.get("attributes", {}).get("tag_name") == "A"
+                    for e in elements
+                )
+                is_results_destination = (
+                    "result" in current_url.lower() or
+                    "archive" in current_url.lower() or
+                    "aditya" in current_url.lower() or
+                    "chandrayaan" in current_url.lower() or
+                    any(w in page_text for w in ["search results", "results found", "articles found", "mission archive", "mission details", "solar mission details", "archive"])
+                )
+                if (active_task.current_objective_index > 0 or is_results_destination) and not (explicitly_requires_navigation and pending_selection and matching_link_present):
+                    if any(w in page_text for w in ["search results", "results found", "result", "articles", "showing", "archive", "mission archive", "details"]):
+                        return True, f"Search results for '{query_m}' verified on page"
 
         # Check authentication / login completion
         if any(k in goal_lower for k in ["login", "sign in", "auth"]):
@@ -152,7 +200,10 @@ class AgentPlanner:
         # Check objective bounds & dynamic task completion
         is_completed, comp_reason = self.check_task_completion(task, sanitized_elements, current_url)
         if is_completed or task.current_objective_index >= len(task.objectives):
-            self.state_machine.transition_to(AgentState.COMPLETED, f"Task completed: {comp_reason}")
+            if self.state_machine.can_transition_to(AgentState.PLANNING):
+                self.state_machine.transition_to(AgentState.PLANNING, "Finalizing completed task")
+            if self.state_machine.can_transition_to(AgentState.COMPLETED):
+                self.state_machine.transition_to(AgentState.COMPLETED, f"Task completed: {comp_reason}")
             task.status = AgentState.COMPLETED
             self.metrics["tasks_completed"] += 1
             return None, ValidationResult(allowed=False, reason=comp_reason), AgentState.COMPLETED
@@ -334,14 +385,14 @@ class AgentPlanner:
     def resume(self) -> AgentState:
         if self.current_task:
             self.current_task.is_paused = False
-            self.current_task.status = AgentState.PLANNING
+            self.current_task.status = AgentState.RUNNING
         if self.state_machine.can_transition_to(AgentState.PLANNING):
             self.state_machine.transition_to(AgentState.PLANNING, "User requested resume")
         return self.state_machine.current_state
 
     def stop(self) -> AgentState:
         if self.current_task:
-            self.current_task.status = AgentState.IDLE
+            self.current_task.status = AgentState.CANCELLED
         self.state_machine.reset()
         return self.state_machine.current_state
 

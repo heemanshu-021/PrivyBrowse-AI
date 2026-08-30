@@ -1,17 +1,19 @@
 """
-PrivyBrowse AI — Goal Decomposition Engine
-Transforms natural-language user tasks into structured, ordered sub-objectives with concrete success criteria.
-Dynamically extracts intents, query strings, domain targets, and attribute keywords.
+PrivyBrowse AI — Goal Decomposition & Dynamic Replanning Engine
+Transforms natural-language user tasks into structured, ordered multi-step task plans with
+concrete success criteria, step dependencies, and dynamic replanning capabilities.
 """
 
 import re
+import time
 from typing import List, Dict, Any, Optional
-from backend.agent.schemas import Objective, ObjectiveStatus
+from backend.agent.schemas import TaskStep, ObjectiveStatus, AgentTask, TaskState
 
 
 class GoalDecomposer:
     """
-    Decomposes high-level natural language browser goals into structured sequences of sub-objectives.
+    Decomposes high-level natural language browser goals into structured sequences of TaskSteps
+    and dynamically replans remaining sub-goals when browser context changes.
     """
 
     def __init__(self):
@@ -50,12 +52,12 @@ class GoalDecomposer:
             return m.group(1).strip()
         return None
 
-    def decompose(self, goal_text: str) -> List[Objective]:
+    def decompose(self, goal_text: str) -> List[TaskStep]:
         """
-        Decomposes goal_text into an ordered list of Objectives.
+        Decomposes goal_text into an ordered list of TaskSteps with step dependencies.
         """
         goal_lower = goal_text.strip().lower()
-        objectives: List[Objective] = []
+        steps: List[TaskStep] = []
 
         # -------------------------------------------------------------
         # 1. SEARCH & LOOKUP TASKS
@@ -68,48 +70,56 @@ class GoalDecomposer:
             query_tokens = [t.lower() for t in re.split(r'\W+', query) if len(t) > 1]
             search_keywords = ["search", "query", "q", "input", "find", "search-box", "search_input"] + query_tokens
 
-            # Objective 1: Locate & Type Search Query
-            objectives.append(Objective(
-                id="obj-001",
+            # Step 1: Locate & Type Search Query
+            steps.append(TaskStep(
+                id="step-001",
                 description=f"Locate and enter search query '{query}' into the search field",
                 target_type="INPUT",
                 semantic_intent="search_input",
                 target_keywords=search_keywords,
-                success_criteria=f"search input populated with '{query}'"
+                success_criteria=f"search input populated with '{query}'",
+                expected_result=f"Input populated with '{query}'",
+                dependencies=[]
             ))
 
-            # Objective 2: Submit Search
-            objectives.append(Objective(
-                id="obj-002",
+            # Step 2: Submit Search
+            steps.append(TaskStep(
+                id="step-002",
                 description=f"Submit search for '{query}'",
                 target_type="BUTTON",
                 semantic_intent="submit_search",
                 target_keywords=["search", "submit", "go", "find", "btn-search", "search_btn", "enter"],
-                success_criteria="search results page appears or DOM updates with results"
+                success_criteria="search results page appears or DOM updates with results",
+                expected_result="Search results rendered in DOM",
+                dependencies=["step-001"]
             ))
 
-            # Objective 3: Select Result / Verify Target
+            # Step 3: Select Result / Verify Target
             result_keywords = query_tokens + ["result", "wiki", "link", "destination", "title", "heading"]
             if domain:
                 result_keywords.append(domain.lower())
 
-            objectives.append(Objective(
-                id="obj-003",
+            steps.append(TaskStep(
+                id="step-003",
                 description=f"Identify and select relevant result for '{query}'",
                 target_type="LINK",
                 semantic_intent="select_result",
                 target_keywords=result_keywords,
-                success_criteria=f"navigation or display of content relevant to '{query}' occurs"
+                success_criteria=f"navigation or display of content relevant to '{query}' occurs",
+                expected_result="Article or destination page navigated",
+                dependencies=["step-002"]
             ))
 
-            # Objective 4: Verify Content Loaded
-            objectives.append(Objective(
-                id="obj-004",
+            # Step 4: Verify Content Loaded
+            steps.append(TaskStep(
+                id="step-004",
                 description=f"Verify target content for '{query}' is visible",
                 target_type=None,
                 semantic_intent="verify_completion",
                 target_keywords=query_tokens,
-                success_criteria="target heading or information visible in viewport"
+                success_criteria="target heading or information visible in viewport",
+                expected_result="Target section verified",
+                dependencies=["step-003"]
             ))
 
         # -------------------------------------------------------------
@@ -117,37 +127,41 @@ class GoalDecomposer:
         # E.g. "Login to the portal with user credentials"
         # -------------------------------------------------------------
         elif any(w in goal_lower for w in ["login", "sign in", "signin", "auth", "authenticate"]):
-            objectives.append(Objective(
-                id="obj-001",
+            steps.append(TaskStep(
+                id="step-001",
                 description="Enter account username or email address",
                 target_type="INPUT",
                 semantic_intent="input_username",
                 target_keywords=["username", "email", "login", "user", "account", "user_email"],
-                success_criteria="username field populated"
+                success_criteria="username field populated",
+                dependencies=[]
             ))
-            objectives.append(Objective(
-                id="obj-002",
+            steps.append(TaskStep(
+                id="step-002",
                 description="Enter account password securely",
                 target_type="INPUT",
                 semantic_intent="input_password",
                 target_keywords=["password", "pass", "pwd", "secret", "credentials"],
-                success_criteria="password field sanitized and filled"
+                success_criteria="password field sanitized and filled",
+                dependencies=["step-001"]
             ))
-            objectives.append(Objective(
-                id="obj-003",
+            steps.append(TaskStep(
+                id="step-003",
                 description="Click Sign In button to authenticate",
                 target_type="BUTTON",
                 semantic_intent="submit_login",
                 target_keywords=["sign in", "login", "submit", "enter", "continue", "auth-btn"],
-                success_criteria="dashboard or authenticated area reached"
+                success_criteria="dashboard or authenticated area reached",
+                dependencies=["step-002"]
             ))
-            objectives.append(Objective(
-                id="obj-004",
+            steps.append(TaskStep(
+                id="step-004",
                 description="Verify successful authentication state",
                 target_type=None,
                 semantic_intent="verify_auth",
                 target_keywords=["dashboard", "welcome", "logout", "profile", "account"],
-                success_criteria="authenticated session active"
+                success_criteria="authenticated session active",
+                dependencies=["step-003"]
             ))
 
         # -------------------------------------------------------------
@@ -155,85 +169,161 @@ class GoalDecomposer:
         # E.g. "Fill out checkout form and confirm order"
         # -------------------------------------------------------------
         elif any(w in goal_lower for w in ["checkout", "billing", "payment", "card", "order", "buy", "purchase"]):
-            objectives.append(Objective(
-                id="obj-001",
+            steps.append(TaskStep(
+                id="step-001",
                 description="Fill customer name and contact details",
                 target_type="INPUT",
                 semantic_intent="input_contact",
                 target_keywords=["name", "first name", "email", "phone", "contact", "customer"],
-                success_criteria="contact fields filled"
+                success_criteria="contact fields filled",
+                dependencies=[]
             ))
-            objectives.append(Objective(
-                id="obj-002",
+            steps.append(TaskStep(
+                id="step-002",
                 description="Enter shipping / billing address",
                 target_type="INPUT",
                 semantic_intent="input_address",
                 target_keywords=["address", "street", "city", "zip", "pincode", "postal"],
-                success_criteria="address fields populated"
+                success_criteria="address fields populated",
+                dependencies=["step-001"]
             ))
-            objectives.append(Objective(
-                id="obj-003",
+            steps.append(TaskStep(
+                id="step-003",
                 description="Enter payment card details",
                 target_type="INPUT",
                 semantic_intent="input_card",
                 target_keywords=["card", "card number", "cc", "cvv", "expiry", "cardholder"],
-                success_criteria="card details sanitized and populated"
+                success_criteria="card details sanitized and populated",
+                dependencies=["step-002"]
             ))
-            objectives.append(Objective(
-                id="obj-004",
+            steps.append(TaskStep(
+                id="step-004",
                 description="Submit payment order after human confirmation",
                 target_type="BUTTON",
                 semantic_intent="submit_payment",
                 target_keywords=["pay", "confirm", "place order", "submit payment", "buy", "charge"],
-                success_criteria="payment confirmation receipt displayed"
+                success_criteria="payment confirmation receipt displayed",
+                dependencies=["step-003"]
             ))
 
         # -------------------------------------------------------------
         # 4. SCROLL & INSPECTION TASKS
-        # E.g. "Scroll down and find specifications"
         # -------------------------------------------------------------
         elif any(w in goal_lower for w in ["scroll", "specs", "specifications", "footer", "bottom", "down"]):
             target_topic = self._extract_search_query(goal_text)
             topic_tokens = [t.lower() for t in re.split(r'\W+', target_topic) if len(t) > 1]
 
-            objectives.append(Objective(
-                id="obj-001",
+            steps.append(TaskStep(
+                id="step-001",
                 description="Scroll down the webpage to reveal offscreen sections",
                 target_type=None,
                 semantic_intent="scroll_page",
                 target_keywords=["scroll", "down", "specifications", "footer"] + topic_tokens,
-                success_criteria="viewport scroll offset increases"
+                success_criteria="viewport scroll offset increases",
+                dependencies=[]
             ))
-            objectives.append(Objective(
-                id="obj-002",
+            steps.append(TaskStep(
+                id="step-002",
                 description=f"Locate and inspect target section for '{target_topic}'",
                 target_type=None,
                 semantic_intent="locate_section",
                 target_keywords=topic_tokens + ["specifications", "features", "details", "contact"],
-                success_criteria="target section visible in viewport"
+                success_criteria="target section visible in viewport",
+                dependencies=["step-001"]
             ))
 
         # -------------------------------------------------------------
         # 5. GENERAL BROWSER INTERACTION
-        # E.g. "Click the submit button and validate form"
         # -------------------------------------------------------------
         else:
             action_terms = [w for w in re.split(r'\W+', goal_lower) if len(w) > 2]
-            objectives.append(Objective(
-                id="obj-001",
+            steps.append(TaskStep(
+                id="step-001",
                 description=f"Inspect page elements and identify primary interaction for '{goal_text}'",
                 target_type="BUTTON",
                 semantic_intent="general_action",
                 target_keywords=action_terms[:5],
-                success_criteria="appropriate interactive element identified"
+                success_criteria="appropriate interactive element identified",
+                dependencies=[]
             ))
-            objectives.append(Objective(
-                id="obj-002",
+            steps.append(TaskStep(
+                id="step-002",
                 description="Execute verified action and check page response",
                 target_type="BUTTON",
                 semantic_intent="execute_general",
                 target_keywords=action_terms[:5],
-                success_criteria="page responds to executed action"
+                success_criteria="page responds to executed action",
+                dependencies=["step-001"]
             ))
 
-        return objectives
+        return steps
+
+    def decompose_with_context(
+        self,
+        goal_text: str,
+        current_url: str = "",
+        current_elements: List[Dict[str, Any]] = None
+    ) -> List[TaskStep]:
+        """
+        Context-aware decomposition: inspects the initial page layout to optimize
+        the initial step plan (e.g. skip typing if results are already visible).
+        """
+        base_steps = self.decompose(goal_text)
+        elements = current_elements or []
+        if not elements:
+            return base_steps
+
+        page_text = " ".join([
+            str(e.get("text", "")) + " " + str(e.get("label", "")) + " " + str(e.get("attributes", {}).get("placeholder", ""))
+            for e in elements
+        ]).lower()
+
+        query = self._extract_search_query(goal_text).lower()
+
+        # If search query results already visible on page, adjust steps to focus directly on selecting result
+        if query and query in page_text and any(w in page_text for w in ["result", "results", "article", "match"]):
+            optimized_steps = [s for s in base_steps if s.semantic_intent in ("select_result", "verify_completion")]
+            if optimized_steps:
+                optimized_steps[0].dependencies = []
+                return optimized_steps
+
+        return base_steps
+
+    def replan_remaining_steps(
+        self,
+        task: AgentTask,
+        failed_step_index: int,
+        current_elements: List[Dict[str, Any]],
+        current_url: str = "",
+        failure_reason: str = ""
+    ) -> List[TaskStep]:
+        """
+        Dynamically replans remaining sub-goals when navigation occurs or a step fails.
+        Preserves previously completed steps and regenerates steps from current_step_index onwards.
+        """
+        if failed_step_index >= len(task.steps):
+            return task.steps
+
+        completed_steps = task.steps[:failed_step_index]
+        remaining_goal = task.goal
+
+        # Generate fresh steps from current context
+        fresh_steps = self.decompose_with_context(
+            goal_text=remaining_goal,
+            current_url=current_url,
+            current_elements=current_elements
+        )
+
+        # Re-index and link dependencies
+        reindexed_fresh = []
+        for idx, s in enumerate(fresh_steps):
+            new_id = f"step-{failed_step_index + idx + 1:03d}"
+            prev_id = completed_steps[-1].id if (idx == 0 and completed_steps) else (reindexed_fresh[-1].id if reindexed_fresh else None)
+            deps = [prev_id] if prev_id else []
+            s_copy = s.model_copy(update={"id": new_id, "dependencies": deps})
+            reindexed_fresh.append(s_copy)
+
+        updated_plan = completed_steps + reindexed_fresh
+        task.steps = updated_plan
+        task.replan_count += 1
+        return updated_plan

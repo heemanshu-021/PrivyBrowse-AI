@@ -1,17 +1,18 @@
 """
 PrivyBrowse AI — End-to-End Autonomous Agent Runner
-Continuous Multi-Turn Autonomous Agent Runner with Evidence-Based Action Verification,
-Progress Tracking, Loop Protection, and Self-Healing Failure Recovery.
+Multi-Step, Multi-Page Continuous Autonomous Browser Agent Runner with Task State Management,
+Dynamic Replanning, Step Dependencies, Bounded Recovery, and Human Confirmation Lifecycle.
 """
 
 import time
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 from backend.agent.schemas import (
     AgentState, AgentTask, TaskConstraints, RiskLevel,
     CandidateAction, ValidationResult, VerificationResult,
     VerificationStatus, FailureCategory, RecoveryRecommendation,
-    ActionType
+    ActionType, TaskStep, ObjectiveStatus, TaskResult
 )
 from backend.agent.planner import AgentPlanner
 from backend.actions.executor import ActionExecutor
@@ -23,8 +24,9 @@ from backend.browser.context_manager import global_browser_context_manager
 
 class EndToEndAgentRunner:
     """
-    Continuous Multi-Turn Autonomous Agent Runner.
-    Drives complete user tasks across live browser sessions with strict evidence-based verification.
+    Continuous Multi-Step, Multi-Page Autonomous Agent Runner.
+    Drives complete user tasks across live browser sessions with strict evidence-based verification,
+    cross-page state memory, step dependency resolution, and dynamic replanning.
     """
 
     def __init__(
@@ -38,6 +40,7 @@ class EndToEndAgentRunner:
         self.change_detector = PageChangeDetector()
         self.recovery_engine = recovery_engine or getattr(self.planner.verifier, "recovery_engine", RecoveryEngine())
         self.progress_tracker = ProgressTracker()
+        self.active_task: Optional[AgentTask] = None
         self.is_stopped = False
         self.is_paused = False
 
@@ -53,7 +56,7 @@ class EndToEndAgentRunner:
         Executes a single end-to-end iteration of the agent loop:
           1. Plan next candidate action
           2. Validate safety & budget
-          3. If confirmation required -> return BLOCKED
+          3. If confirmation required -> return BLOCKED / REQUIRES_CONFIRMATION
           4. Execute action via executor
           5. Verify state change against expected state
           6. Record progress & check for action loops / stalls
@@ -91,7 +94,7 @@ class EndToEndAgentRunner:
                 return {
                     "status": "REQUIRES_CONFIRMATION",
                     "message": "High-risk or financial interaction requires user confirmation",
-                    "state": AgentState.BLOCKED.value,
+                    "state": AgentState.AWAITING_CONFIRMATION.value,
                     "action": candidate.model_dump(),
                     "validation": validation.model_dump()
                 }
@@ -196,8 +199,18 @@ class EndToEndAgentRunner:
         self.planner.memory.record_action(action_dict)
         if self.planner.current_task:
             self.planner.current_task.actions_executed += 1
-            if verify_res.success and self.planner.current_task.current_objective_index < len(self.planner.current_task.objectives) - 1:
-                self.planner.current_task.current_objective_index += 1
+            if verify_res.success and self.planner.current_task.current_step_index < len(self.planner.current_task.steps):
+                curr_step = self.planner.current_task.steps[self.planner.current_task.current_step_index]
+                curr_step.status = ObjectiveStatus.COMPLETED
+                curr_step.evidence = verify_res.evidence
+                curr_step.completed_at = datetime.now(timezone.utc).isoformat()
+                if curr_step.id not in self.planner.current_task.completed_steps:
+                    self.planner.current_task.completed_steps.append(curr_step.id)
+                if curr_step.id in self.planner.current_task.pending_steps:
+                    self.planner.current_task.pending_steps.remove(curr_step.id)
+                
+                if self.planner.current_task.current_step_index < len(self.planner.current_task.steps) - 1:
+                    self.planner.current_task.current_step_index += 1
 
         # Check for Safe Stop requirement
         turn_status = "SUCCESS" if (exec_res.success and verify_res.success) else "FAILED"
@@ -228,7 +241,7 @@ class EndToEndAgentRunner:
         perception_callback: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
-        Drives a full multi-turn closed-loop task execution:
+        Drives a full multi-turn, multi-step, multi-page closed-loop task execution:
           OBSERVE -> PLAN -> VALIDATE -> EXECUTE -> RE-OBSERVE -> VERIFY -> RECOVER/REPLAN -> COMPLETE/STOP
         Continues until completion, user pause/stop, confirmation required, safe stop, or budget reached.
         """
@@ -238,52 +251,77 @@ class EndToEndAgentRunner:
         self.progress_tracker.reset()
         self.recovery_engine.reset()
 
-        # 1. Initialize Task
-        task = self.planner.create_task(task_goal, TaskConstraints(max_actions=max_turns))
-        
+        # 1. Initialize Structured Task with Context Awareness
+        task = self.planner.create_task(
+            goal=task_goal,
+            constraints=TaskConstraints(max_actions=max_turns),
+            initial_elements=initial_elements,
+            current_url=current_url
+        )
+        task.status = AgentState.RUNNING
+        self.active_task = task
+
         current_elements = list(initial_elements)
         active_url = current_url
         history: List[Dict[str, Any]] = []
         turn_results: List[Dict[str, Any]] = []
-        
+
         for turn_idx in range(max_turns):
             if self.is_stopped:
+                task.status = AgentState.CANCELLED
                 return {
                     "status": "STOPPED",
                     "task_id": task.task_id,
                     "goal": task_goal,
                     "turns_executed": turn_idx,
+                    "completed_steps": task.completed_steps,
+                    "remaining_steps": task.pending_steps,
                     "message": "Execution stopped by user",
                     "turns": turn_results
                 }
 
             if self.is_paused:
+                task.status = AgentState.PAUSED
                 return {
                     "status": "PAUSED",
                     "task_id": task.task_id,
                     "goal": task_goal,
                     "turns_executed": turn_idx,
+                    "completed_steps": task.completed_steps,
+                    "remaining_steps": task.pending_steps,
                     "message": "Execution paused by user",
                     "turns": turn_results
                 }
 
-            # Check if task is already complete from perception evidence
+            # 2. Check Task Completion Evidence
             is_done, reason = self.planner.check_task_completion(task, current_elements, active_url)
             if is_done:
                 if self.planner.state_machine.can_transition_to(AgentState.COMPLETED):
                     self.planner.state_machine.transition_to(AgentState.COMPLETED, f"Task completed: {reason}")
                 task.status = AgentState.COMPLETED
+                task.completed_at = datetime.now(timezone.utc).isoformat()
+                task.task_progress = 1.0
                 return {
                     "status": "COMPLETED",
                     "task_id": task.task_id,
                     "goal": task_goal,
                     "turns_executed": turn_idx,
+                    "completed_steps": task.completed_steps,
+                    "remaining_steps": [],
                     "message": reason,
                     "turns": turn_results,
                     "total_latency_ms": round((time.perf_counter() - t0) * 1000.0, 2)
                 }
 
-            # Execute single turn
+            # 3. Check Step Dependencies
+            if task.current_step_index < len(task.steps):
+                current_step = task.steps[task.current_step_index]
+                unmet_deps = [d for d in current_step.dependencies if d not in task.completed_steps]
+                if unmet_deps:
+                    # Replan or skip to resolve dependency
+                    self.planner.replan_task(task, task.current_step_index, current_elements, active_url, f"Unmet dependencies: {unmet_deps}")
+
+            # 4. Execute Single Turn
             turn_res = self.run_single_turn(
                 sanitized_elements=current_elements,
                 current_url=active_url,
@@ -293,25 +331,50 @@ class EndToEndAgentRunner:
             )
             turn_results.append(turn_res)
 
-            # Update current elements and url for next turn
+            # Update working memory & context
             if turn_res.get("post_elements"):
                 current_elements = turn_res["post_elements"]
             if turn_res.get("post_url"):
                 active_url = turn_res["post_url"]
+                task.current_context = {"url": active_url, "elements_count": len(current_elements)}
 
-            # Check special stop conditions
-            if turn_res.get("status") in ("REQUIRES_CONFIRMATION", "BLOCKED"):
+            # Update Task Progress Metric
+            if task.steps:
+                task.task_progress = round(len(task.completed_steps) / len(task.steps), 2)
+
+            # 5. Handle Human-in-the-Loop Confirmation Pause
+            if turn_res.get("status") in ("REQUIRES_CONFIRMATION", "AWAITING_CONFIRMATION"):
+                task.status = AgentState.AWAITING_CONFIRMATION
+                if task.current_step_index < len(task.steps):
+                    task.steps[task.current_step_index].status = ObjectiveStatus.AWAITING_CONFIRMATION
                 return {
-                    "status": turn_res["status"],
+                    "status": "AWAITING_CONFIRMATION",
                     "task_id": task.task_id,
                     "goal": task_goal,
                     "turns_executed": turn_idx + 1,
-                    "message": turn_res.get("message", "Action blocked"),
+                    "completed_steps": task.completed_steps,
+                    "remaining_steps": task.pending_steps,
+                    "message": "Task paused: Action requires human confirmation before continuing.",
                     "blocked_turn": turn_res,
                     "turns": turn_results
                 }
 
-            # Safe Stop enforcement
+            # 6. Handle Security Block
+            if turn_res.get("status") == "BLOCKED":
+                task.status = AgentState.BLOCKED
+                return {
+                    "status": "BLOCKED",
+                    "task_id": task.task_id,
+                    "goal": task_goal,
+                    "turns_executed": turn_idx + 1,
+                    "completed_steps": task.completed_steps,
+                    "remaining_steps": task.pending_steps,
+                    "message": turn_res.get("message", "Action blocked by security policy"),
+                    "blocked_turn": turn_res,
+                    "turns": turn_results
+                }
+
+            # 7. Safe Stop Enforcement
             if turn_res.get("status") == "SAFE_STOP" or turn_res.get("recovery_recommendation") == "SAFE_STOP":
                 if self.planner.state_machine.can_transition_to(AgentState.FAILED):
                     self.planner.state_machine.transition_to(AgentState.FAILED, "Safe stop triggered")
@@ -322,16 +385,26 @@ class EndToEndAgentRunner:
                     "task_id": task.task_id,
                     "goal": task_goal,
                     "turns_executed": turn_idx + 1,
+                    "completed_steps": task.completed_steps,
+                    "remaining_steps": task.pending_steps,
                     "message": diag_msg,
                     "safe_stopped": True,
                     "turns": turn_results,
                     "total_latency_ms": round((time.perf_counter() - t0) * 1000.0, 2)
                 }
 
+            # 8. Dynamic Replanning on Step Failure / Ineffective Action
+            if turn_res.get("status") == "FAILED" and turn_res.get("recovery_recommendation") in ("REPERCEIVE", "RETRY_ALTERNATIVE"):
+                if task.current_step_index < len(task.steps):
+                    task.steps[task.current_step_index].retry_count += 1
+                    if task.steps[task.current_step_index].retry_count >= task.constraints.max_retries_per_step:
+                        # Replan remaining sub-goals
+                        self.planner.replan_task(task, task.current_step_index, current_elements, active_url, "Step retry budget exceeded")
+
             if turn_res.get("status") in ("NO_ACTION", "COMPLETED"):
                 break
 
-            # If an action was dispatched, record it in history
+            # If action was dispatched, record in history
             if turn_res.get("action"):
                 act = turn_res["action"]
                 history.append({
@@ -351,31 +424,69 @@ class EndToEndAgentRunner:
                 except Exception:
                     pass
 
-        # Final check
+        # Final Task Completion Evaluation
         is_done, reason = self.planner.check_task_completion(task, current_elements, active_url)
         final_status = "COMPLETED" if (is_done or task.status == AgentState.COMPLETED) else "FINISHED"
+        if final_status == "COMPLETED":
+            task.status = AgentState.COMPLETED
+            task.completed_at = datetime.now(timezone.utc).isoformat()
+
         return {
             "status": final_status,
             "task_id": task.task_id,
             "goal": task_goal,
             "turns_executed": len(turn_results),
+            "completed_steps": task.completed_steps,
+            "remaining_steps": [s.id for s in task.steps if s.id not in task.completed_steps],
+            "task_progress": task.task_progress,
             "message": reason,
             "turns": turn_results,
             "total_latency_ms": round((time.perf_counter() - t0) * 1000.0, 2)
         }
 
+    def resume_task(
+        self,
+        task: AgentTask,
+        current_elements: List[Dict[str, Any]],
+        current_url: str = "",
+        user_confirmed: bool = True,
+        max_turns: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Resumes a paused or confirmation-blocked task from its last recorded step without restarting from scratch.
+        """
+        self.active_task = task
+        self.is_paused = False
+        self.is_stopped = False
+        task.status = AgentState.RUNNING
+
+        # Continue closed-loop task execution with user confirmation enabled
+        return self.run_closed_loop_task(
+            task_goal=task.goal,
+            initial_elements=current_elements,
+            current_url=current_url,
+            max_turns=max_turns,
+            user_confirmed=user_confirmed
+        )
+
     def stop(self):
         """Immediately halts all autonomous execution."""
         self.is_stopped = True
+        if self.active_task:
+            self.active_task.status = AgentState.CANCELLED
         self.planner.stop()
 
     def pause(self):
         """Pauses autonomous execution preserving active task state."""
         self.is_paused = True
+        if self.active_task:
+            self.active_task.status = AgentState.PAUSED
         self.planner.pause()
 
     def resume(self):
         """Resumes autonomous execution."""
         self.is_paused = False
         self.is_stopped = False
+        if self.active_task:
+            self.active_task.status = AgentState.RUNNING
         self.planner.resume()

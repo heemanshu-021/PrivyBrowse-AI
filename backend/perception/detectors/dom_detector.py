@@ -60,7 +60,7 @@ class DOMDetector:
             if not isinstance(node, dict):
                 continue
 
-            bbox_raw = node.get("bbox")
+            bbox_raw = node.get("bbox") or node.get("boundingBox") or node.get("rect")
             if not bbox_raw:
                 continue
 

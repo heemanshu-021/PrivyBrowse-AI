@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dynamic Step Workflow</title>
+    <style>
+        body { font-family: sans-serif; margin: 40px; background: #0f172a; color: #f8fafc; }
+        .card { background: #1e293b; padding: 24px; border-radius: 8px; max-width: 600px; }
+        button { padding: 8px 16px; margin: 8px 0; border-radius: 4px; border: 1px solid #475569; background: #3b82f6; color: white; cursor: pointer; }
+        .hidden { display: none; }
+        .success-box { background: #065f46; padding: 12px; border-radius: 6px; margin-top: 12px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Telemetry Provisioning</h2>
+        <p>Step 1: Generate telemetry authentication token.</p>
+        <button id="btn-generate" onclick="revealNextStep()">Generate Access Token</button>
+
+        <div id="step-2-container" class="hidden" style="margin-top: 16px;">
+            <p>Step 2: Confirm telemetry activation with generated token.</p>
+            <button id="btn-activate" onclick="completeWorkflow()">Activate Telemetry Stream</button>
+        </div>
+
+        <div id="workflow-complete" class="hidden success-box">
+            <h3>Telemetry Active</h3>
+            <p id="status-text">Station telemetry stream connected and transmitting.</p>
+        </div>
+    </div>
+
+    <script>
+        function revealNextStep() {
+            document.getElementById('step-2-container').classList.remove('hidden');
+        }
+        function completeWorkflow() {
+            document.getElementById('workflow-complete').classList.remove('hidden');
+            document.getElementById('status-text').innerText = "All telemetry verified and stream active.";
+        }
+    </script>
+</body>
+</html>

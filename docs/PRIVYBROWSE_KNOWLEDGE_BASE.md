@@ -1163,6 +1163,121 @@ The browser environment is fundamentally **UNTRUSTED**. Any content originating 
 
 ---
 
+## 23. Real Multi-Step, Multi-Page Task Execution & Task State Management
+
+PrivyBrowse-AI operates as a continuous, verified **multi-step, multi-page autonomous browser agent**. It decomposes high-level natural language user goals into structured dependency graphs, executes steps sequentially across live web sessions, maintains cross-page state memory, handles human-in-the-loop confirmation, and dynamically replans when web pages mutate.
+
+### 1. Multi-Step Execution Lifecycle
+
+```
+             ┌─────────────────────────────┐
+             │       USER TASK GOAL        │
+             └──────────────┬──────────────┘
+                            │
+             ┌──────────────▼──────────────┐
+             │    Goal Decomposition       │
+             │   (Dynamic Step Graph)      │
+             └──────────────┬──────────────┘
+                            │
+              ┌─────────────▼─────────────┐
+        ┌────►│  Observe Browser Context  │
+        │     │  & On-Device Perception   │
+        │     └─────────────┬─────────────┘
+        │                   │
+        │     ┌─────────────▼─────────────┐
+        │     │  Plan & Score Candidate   │
+        │     │       Action (Step N)     │
+        │     └─────────────┬─────────────┘
+        │                   │
+        │     ┌─────────────▼─────────────┐
+        │     │  Pre-Execution Safety &   │
+        │     │     ActionValidator Gate  │
+        │     └─────────────┬─────────────┘
+        │                   │
+        │     ┌─────────────▼─────────────┐
+        │     │   Dispatch Action via     │
+        │     │   Chrome Bridge Executor  │
+        │     └─────────────┬─────────────┘
+        │                   │
+        │     ┌─────────────▼─────────────┐
+        │     │  Evidence-Based Action    │
+        │     │   Outcome Verification    │
+        │     └─────────────┬─────────────┘
+        │                   │
+        │     ┌─────────────▼─────────────┐
+        │     │  Update Task State Memory │
+        │     │   & Check Completion      │
+        │     └─────────────┬─────────────┘
+        │                   │
+        │         [More Steps Pending?]
+        │         ├── YES ──► (Loop to Step N+1)
+        └─────────┴── NO  ──► COMPLETED
+```
+
+---
+
+### 2. Task State & Step Model
+
+#### A. Task States (`TaskState` / `AgentState`)
+* `PLANNED`: Task objective decomposed into ordered sub-steps; ready to execute.
+* `RUNNING`: Actively observing, planning, and executing steps.
+* `WAITING`: Waiting for network requests or navigation to settle.
+* `VERIFYING`: Evaluating post-action DOM/URL state changes against expected criteria.
+* `RECOVERING`: Re-perceiving or replanning following an ineffective action.
+* `AWAITING_CONFIRMATION`: Paused awaiting explicit human authorization for high-risk actions.
+* `PAUSED`: Execution paused by user with preserved state.
+* `BLOCKED`: Action rejected by security, privacy, or navigation guardrails.
+* `COMPLETED`: All step objectives verified with semantic evidence.
+* `FAILED`: Retry budget exhausted or unrecoverable error encountered.
+* `CANCELLED`: Execution halted by user STOP command.
+
+#### B. Task Step Representation (`TaskStep`)
+* `id`: Unique step identifier (e.g. `step-001`).
+* `description`: Human-readable explanation of the sub-goal.
+* `semantic_intent`: Intent category (`search_input`, `submit_search`, `select_result`, `input_username`, `submit_payment`).
+* `dependencies`: List of preceding `step_ids` that must complete before this step can run.
+* `success_criteria`: Concrete condition required to mark the step completed.
+* `status`: `PENDING`, `IN_PROGRESS`, `COMPLETED`, `FAILED`, `BLOCKED`, `AWAITING_CONFIRMATION`.
+* `evidence`: Verified state change evidence (e.g. URL change, DOM mutation, input value update).
+* `retry_count`: Tracked retries bounded by `max_retries_per_step`.
+
+---
+
+### 3. Key Multi-Step Capabilities
+
+#### A. Dynamic Goal Decomposition & Context-Aware Planning (`backend/agent/decomposer.py`)
+* Decomposes arbitrary natural language goals into ordered `TaskStep` graphs with strict dependencies.
+* **Context Awareness**: Inspects the active page before planning. If the current page already contains the target information or search results, skips redundant search steps.
+* **Dynamic Replanning**: If a step fails, the page navigates unexpectedly, or the DOM mutates, `replan_remaining_steps()` recalculates remaining sub-goals while preserving previously completed step history.
+
+#### B. Cross-Page & Tab State Persistence (`backend/actions/agent_runner.py`)
+* Retains completed steps, task goals, and verification memory across multi-page navigation flows (`Page A` $\rightarrow$ `Page B` $\rightarrow$ `Page C`).
+* Resynchronizes browser context if tab switching occurs, preventing actions on unrelated background tabs.
+
+#### C. Human-in-the-Loop Confirmation Pause & Resume
+* When a high-risk financial, irreversible, or sensitive interaction is encountered, execution pauses cleanly in `AWAITING_CONFIRMATION`.
+* The user can confirm or cancel. Upon confirmation, `resume_task()` continues from the exact step without restarting from step 1.
+
+#### D. Bounded Retries & Task Loop Breaker
+* `max_retries_per_step`: Configurable limit (default 2) preventing repeated blind attempts on missing elements.
+* `ProgressTracker`: Intercepts 3-turn identical action loops or stagnant turns and triggers `SAFE_STOP`.
+
+---
+
+### 4. Multi-Step Execution File Map
+
+| File | What It Does | What Changed | Why | How It Connects |
+| :--- | :--- | :--- | :--- | :--- |
+| `backend/agent/schemas.py` | Agent & task data models | Added `TaskStep`, `TaskState`, `TaskResult`, enhanced `AgentTask` | Provides structured multi-step state models | Core schema across agent and planner |
+| `backend/agent/decomposer.py` | Goal decomposition engine | Added `decompose_with_context()`, `replan_remaining_steps()` | Enables dynamic sub-goal generation and runtime replanning | Invoked by AgentPlanner on task start and replan |
+| `backend/agent/planner.py` | Agent orchestrator | Added `create_task()` with context, `replan_task()`, enhanced completion | Coordinates multi-step lifecycle and completion checks | Central decision engine |
+| `backend/actions/agent_runner.py` | Multi-step execution runner | Added step dependency resolution, cross-page persistence, pause/resume | Orchestrates continuous multi-turn execution loops | Master runtime executor |
+| `backend/agent/__init__.py` | Package exports | Exported `TaskStep`, `TaskState`, `TaskResult`, `StepStatus` | Clean package interfaces | Module entry point |
+| `tests/test_multistep_task.py` | **[NEW]** 23 unit & integration tests | Tests task state transitions, dependencies, replanning, confirmation | Comprehensive unit verification | Task verification suite |
+| `tests/test_multistep_real_browser.py` | **[NEW]** 5 real browser tests | Tests real search, multi-page flows, dynamic DOM, security, confirmation | Validates real browser execution | Real browser test suite |
+
+---
+
 ## 24. Performance Telemetry & Benchmarking
 
 * **Perception Latency**: **1.97 ms** (Target $<50\text{ ms}$)
