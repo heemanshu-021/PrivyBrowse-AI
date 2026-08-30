@@ -1,7 +1,7 @@
 """
 PrivyBrowse AI — Action Execution Schemas & Models
 Strongly typed models for real browser action execution payloads, results,
-page mutation signals, and execution safety configurations.
+page mutation signals, expected state definitions, and execution safety configurations.
 """
 
 from enum import Enum
@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 
 class ExecutionStatus(str, Enum):
+    # Core states
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
     BLOCKED = "BLOCKED"
@@ -18,6 +19,17 @@ class ExecutionStatus(str, Enum):
     STALE_TARGET = "STALE_TARGET"
     EXTENSION_UNAVAILABLE = "EXTENSION_UNAVAILABLE"
     EXTENSION_TIMEOUT = "EXTENSION_TIMEOUT"
+
+    # Action Lifecycle & Verification States
+    ACTION_RECEIVED = "ACTION_RECEIVED"
+    ACTION_STARTED = "ACTION_STARTED"
+    ACTION_EXECUTED = "ACTION_EXECUTED"
+    ACTION_VERIFIED = "ACTION_VERIFIED"
+    ACTION_FAILED = "ACTION_FAILED"
+    ACTION_TIMEOUT = "ACTION_TIMEOUT"
+    ACTION_REJECTED = "ACTION_REJECTED"
+    ACTION_STALE = "ACTION_STALE"
+    NO_STATE_CHANGE = "NO_STATE_CHANGE"
 
 
 class SupportedKey(str, Enum):
@@ -36,6 +48,21 @@ class ActionError(BaseModel):
     code: str
     message: str
     details: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ExpectedState(BaseModel):
+    """Anticipated browser state changes after action execution."""
+    action_type: str = "CLICK"
+    target_id: Optional[str] = None
+    expected_url_pattern: Optional[str] = None
+    expected_dom_mutation: bool = False
+    expected_value_populated: bool = False
+    expected_scroll_delta: Optional[Dict[str, float]] = None
+    expected_element_appear: Optional[str] = None
+    expected_element_disappear: Optional[str] = None
+    is_sensitive: bool = False
+    allow_boundary_stop: bool = True
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ActionResult(BaseModel):

@@ -1,7 +1,7 @@
 """
 PrivyBrowse AI — Agent Schemas & Data Models
 Strongly typed models for Agent State, Tasks, Objectives, Candidate Actions,
-Planning Traces, Risk Classifications, and Verification Results.
+Planning Traces, Risk Classifications, and Evidence-Based Verification Results.
 """
 
 from enum import Enum
@@ -18,6 +18,7 @@ class AgentState(str, Enum):
     VALIDATING = "VALIDATING"
     ACTING = "ACTING"
     VERIFYING = "VERIFYING"
+    RECOVERING = "RECOVERING"
     COMPLETED = "COMPLETED"
     PAUSED = "PAUSED"
     FAILED = "FAILED"
@@ -49,6 +50,37 @@ class RiskLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 
+class VerificationStatus(str, Enum):
+    ACTION_VERIFIED = "ACTION_VERIFIED"
+    NO_STATE_CHANGE = "NO_STATE_CHANGE"
+    UNVERIFIED = "UNVERIFIED"
+    FAILED = "FAILED"
+    STALE_TARGET = "STALE_TARGET"
+    SCROLL_BOUNDARY = "SCROLL_BOUNDARY"
+
+
+class FailureCategory(str, Enum):
+    TARGET_NOT_FOUND = "TARGET_NOT_FOUND"
+    TARGET_STALE = "TARGET_STALE"
+    NO_STATE_CHANGE = "NO_STATE_CHANGE"
+    UNEXPECTED_NAVIGATION = "UNEXPECTED_NAVIGATION"
+    EXTENSION_DISCONNECTED = "EXTENSION_DISCONNECTED"
+    VALIDATION_FAILURE = "VALIDATION_FAILURE"
+    PRIVACY_BLOCK = "PRIVACY_BLOCK"
+    ACTION_TIMEOUT = "ACTION_TIMEOUT"
+    LOOP_DETECTED = "LOOP_DETECTED"
+    UNKNOWN_FAILURE = "UNKNOWN_FAILURE"
+
+
+class RecoveryRecommendation(str, Enum):
+    PROCEED = "PROCEED"
+    REPERCEIVE = "REPERCEIVE"
+    RETRY_ALTERNATIVE = "RETRY_ALTERNATIVE"
+    REBUILD_CONTEXT = "REBUILD_CONTEXT"
+    REQUEST_CONFIRMATION = "REQUEST_CONFIRMATION"
+    SAFE_STOP = "SAFE_STOP"
+
+
 class Objective(BaseModel):
     """A sub-goal within a decomposed task."""
     id: str
@@ -76,6 +108,21 @@ class CandidateAction(BaseModel):
     reason: str = ""
 
 
+class ExpectedState(BaseModel):
+    """Anticipated browser state changes after action execution."""
+    action_type: str = "CLICK"
+    target_id: Optional[str] = None
+    expected_url_pattern: Optional[str] = None
+    expected_dom_mutation: bool = False
+    expected_value_populated: bool = False
+    expected_scroll_delta: Optional[Dict[str, float]] = None
+    expected_element_appear: Optional[str] = None
+    expected_element_disappear: Optional[str] = None
+    is_sensitive: bool = False
+    allow_boundary_stop: bool = True
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 class ValidationResult(BaseModel):
     """Result of safety and policy validation before executing an action."""
     allowed: bool
@@ -88,9 +135,14 @@ class ValidationResult(BaseModel):
 class VerificationResult(BaseModel):
     """Outcome verification after an action has been executed."""
     success: bool
-    signal: str  # "PAGE_NAVIGATED", "DOM_UPDATED", "TARGET_FILLED", "NO_CHANGE", etc.
+    signal: str  # "PAGE_NAVIGATED", "DOM_MUTATION_DETECTED", "INPUT_VALUE_UPDATED", "NO_CHANGE", etc.
     details: str
+    status: VerificationStatus = VerificationStatus.ACTION_VERIFIED
+    evidence: List[str] = Field(default_factory=list)
+    failure_category: Optional[FailureCategory] = None
+    recovery_recommendation: RecoveryRecommendation = RecoveryRecommendation.PROCEED
     re_perception_required: bool = False
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class PlanTraceEntry(BaseModel):

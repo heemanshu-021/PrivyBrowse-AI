@@ -282,7 +282,13 @@ class AgentPlanner:
         prev_elements: List[Dict[str, Any]],
         current_elements: List[Dict[str, Any]],
         prev_url: str = "",
-        current_url: str = ""
+        current_url: str = "",
+        prev_title: str = "",
+        current_title: str = "",
+        prev_scroll: Optional[Dict[str, float]] = None,
+        current_scroll: Optional[Dict[str, float]] = None,
+        exec_error: Optional[str] = None,
+        expected_state: Optional[Any] = None
     ) -> VerificationResult:
         """Verifies action execution outcome and updates state machine."""
         if self.state_machine.can_transition_to(AgentState.VERIFYING):
@@ -290,12 +296,25 @@ class AgentPlanner:
             if self.current_task:
                 self.current_task.status = AgentState.VERIFYING
 
+        active_obj_id = (
+            self.current_task.objectives[self.current_task.current_objective_index].id
+            if self.current_task and self.current_task.current_objective_index < len(self.current_task.objectives)
+            else "obj-01"
+        )
+
         res = self.verifier.verify_action_outcome(
             action=action,
             prev_elements=prev_elements,
             current_elements=current_elements,
             prev_url=prev_url,
-            current_url=current_url
+            current_url=current_url,
+            prev_title=prev_title,
+            current_title=current_title,
+            prev_scroll=prev_scroll,
+            current_scroll=current_scroll,
+            exec_error=exec_error,
+            expected_state=expected_state,
+            objective_id=active_obj_id
         )
 
         # Update trace if task active

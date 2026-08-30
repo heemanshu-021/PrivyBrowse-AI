@@ -957,14 +957,109 @@ ValidationResult: { allowed: true/false, requires_confirmation: true/false }
 
 ---
 
-## 21. Verification & State Monitoring
+## 21. Real Action Verification, Failure Recovery & Agent Reliability
 
-* **Component**: `PageChangeDetector` (`backend/actions/page_change_detector.py`).
-* **Signals Tracked**:
-  1. `url_changed`: Navigation to new URL.
-  2. `dom_mutated`: Significant DOM element count delta ($>10\%$).
-  3. `scroll_shifted`: Viewport scroll position displacement ($>50\text{ px}$).
-* **Stale Target Recovery**: If target element is removed before click dispatch, executor returns `STALE_TARGET`, triggering immediate re-perception.
+PrivyBrowse-AI implements a strict **evidence-based action verification and failure recovery architecture**. The agent never assumes success merely because an action was dispatched or because the Chrome extension returned an execution acknowledgement (`ACK`). Every action outcome is verified against pre-computed expected state changes using privacy-safe observation diffs.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    CLOSED-LOOP AGENT CYCLE                  │
+│                                                             │
+│   1. PLAN        ──► Select Candidate Action                │
+│   2. EXPECT      ──► Generate ExpectedState Changes         │
+│   3. VALIDATE    ──► ActionValidator & PrivacyGate Check    │
+│   4. EXECUTE     ──► Bridge Dispatch to Real Browser Tab    │
+│   5. OBSERVE     ──► Capture Post-Action Context & Elements │
+│   6. DIFF        ──► Compute ObservationDifferencer Delta   │
+│   7. VERIFY      ──► Match Evidence vs Expected State       │
+│                      │                                      │
+│         ┌────────────┴────────────┐                         │
+│         ▼                         ▼                         │
+│   ACTION_VERIFIED           VERIFICATION FAILED             │
+│   (Concrete Evidence)       (NO_STATE_CHANGE / STALE / etc) │
+│         │                         │                         │
+│         ▼                         ▼                         │
+│   Record Progress           RecoveryEngine Routing          │
+│   Continue Next Goal        ├── REPERCEIVE                  │
+│                             ├── RETRY_ALTERNATIVE           │
+│                             ├── REBUILD_CONTEXT             │
+│                             └── SAFE_STOP (Exhausted)       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Why Acknowledgement is Not Success
+
+* **Action Dispatched / Acknowledged (`ACTION_EXECUTED`)**: Means Chrome dispatched event listeners (e.g. `click` event fired).
+* **Action Actually Succeeded (`ACTION_VERIFIED`)**: Means the webpage actually responded to the action with an observable state transition (URL navigated, modal dialog rendered, input retained text, scroll displaced, or DOM layout updated).
+* If a click is dispatched to an inert or unresponsive element and nothing changes, the system classifies it as `NO_STATE_CHANGE` rather than falsely claiming task completion.
+
+### Verification by Action Type
+
+#### 1. CLICK Verification (`ActionVerifier`)
+A click action is verified if and only if at least one of the following concrete evidence signals is observed:
+1. **URL Navigation**: Destination URL changed or redirected.
+2. **Modal Rendered**: Dialog overlay or popup appeared in the DOM.
+3. **DOM Mutation**: Elements were added or removed from the DOM layout.
+4. **Target State Toggled**: Element attributes changed (`checked`, `disabled`, `aria-expanded`).
+5. **Element Disappeared**: Target element or modal overlay removed.
+* If none of these occur, it is marked `NO_STATE_CHANGE` and routed to recovery.
+
+#### 2. TYPE Verification (`ActionVerifier`)
+* **Non-Sensitive Inputs**: Verifies target element exists in post-action DOM and contains the expected query or text.
+* **Sensitive Inputs (Passwords, Credit Cards, PINs, OTPs)**:
+  * **Privacy-Preserving Invariant**: NEVER logs, stores, or transmits raw secret values.
+  * Verifies only safe metadata properties: field contains characters (`value_length > 0`), input is masked (`••••••••`), or field has secure value flag.
+
+#### 3. SCROLL Verification (`ActionVerifier`)
+* Verifies viewport displacement $\Delta y \neq 0$ px.
+* **Boundary Handling**: If already at the top ($\text{scroll}_y = 0$) or bottom ($\text{scroll}_y = \text{maxScroll}_y$), classifies as `SCROLL_BOUNDARY_REACHED`. This prevents infinite scrolling loops.
+
+#### 4. NAVIGATE Verification (`ActionVerifier`)
+* Verifies destination URL, hostname, and document readiness.
+* Handles HTTP redirects gracefully.
+
+### Failure Classification (`FailureClassifier`)
+
+Failures are categorized into granular classes:
+
+| Failure Category | Trigger Condition | Recovery Strategy |
+| :--- | :--- | :--- |
+| `TARGET_NOT_FOUND` | Element absent from perception | Re-perceive $\rightarrow$ Scroll to view $\rightarrow$ Safe Stop |
+| `TARGET_STALE` | Tab mismatch or DOM layout changed | Re-perceive $\rightarrow$ Re-score candidates |
+| `NO_STATE_CHANGE` | Action dispatched with 0 observable effect | Try alternative strategy (e.g. Enter key) |
+| `UNEXPECTED_NAVIGATION` | Webpage navigated to unexpected URL | Invalidate plan $\rightarrow$ Rebuild context |
+| `EXTENSION_DISCONNECTED` | Bridge lost extension heartbeat | Reconnect or halt safely |
+| `VALIDATION_FAILURE` | Safety policy or coordinate out-of-bounds | Block action $\rightarrow$ Safe stop |
+| `PRIVACY_BLOCK` | Egress of unredacted credentials | Privacy gate block $\rightarrow$ Safe stop |
+| `ACTION_TIMEOUT` | Extension ACK timeout ($>5000\text{ms}$) | Retry with backoff $\rightarrow$ Safe stop |
+| `LOOP_DETECTED` | 3 identical actions or oscillating states | Break loop immediately $\rightarrow$ Safe stop |
+
+### Progress Tracking & Loop Prevention (`ProgressTracker`)
+
+* Tracks historical state signatures: `(url, dom_fingerprint, action_signature)`.
+* **3-Turn Identical Action Guard**: Halts immediately if the agent repeats the exact same action 3 times without state advancement.
+* **Oscillation Guard**: Detects 2-state bouncing ($A \leftrightarrow B$).
+* **Stagnant Progress Guard**: Halts if 4 consecutive turns produce zero state progress.
+
+### Bounded Retries & Safe Stop (`RecoveryEngine`)
+
+* **Per-Objective Limit**: Maximum 2 retries per sub-goal.
+* **Total Task Limit**: Maximum 6 retries across the entire task.
+* **Safe Stop Invariant**: When recovery attempts are exhausted or a task is impossible, the agent terminates with an explainable diagnostic status (`FAILED` with diagnostic reason) and **never reports false success**.
+
+### Files for Action Verification & Recovery
+
+| File | What Changed | Why | Role in System |
+| :--- | :--- | :--- | :--- |
+| `backend/agent/differencer.py` | **[NEW]** `ObservationDifferencer`, `StateDiff` | Computes privacy-safe structural, URL, scroll, and element deltas | State differencing engine |
+| `backend/agent/recovery.py` | **[NEW]** `FailureClassifier`, `RecoveryEngine`, `ProgressTracker` | Classifies errors, manages bounded retries, breaks loops, triggers safe stop | Self-healing recovery engine |
+| `backend/agent/verifier.py` | Complete refactoring to evidence-based verification for CLICK, TYPE, SCROLL, NAVIGATE | Eliminates fake success; verifies real state changes | Action outcome verifier |
+| `backend/actions/schemas.py` | Added `ExpectedState` and full `ExecutionStatus` verification lifecycle | Structured state definitions | Action schemas |
+| `backend/agent/schemas.py` | Added `VerificationStatus`, `FailureCategory`, `RecoveryRecommendation` | Typed verification results | Agent schemas |
+| `backend/actions/agent_runner.py` | Integrated evidence verification, ProgressTracker, and RecoveryEngine into loop | Orchestrates autonomous verify-and-recover loop | Agent execution runner |
+| `backend/agent/planner.py` | Enhanced `verify_step_outcome()` with full state parameters and trace logging | Planner verification hooks | Task planner |
+| `tests/test_verification_recovery.py` | **[NEW]** 20 comprehensive unit & integration tests | Verification of all failure modes, retries, and boundaries | Unit test suite |
+| `tests/test_verification_recovery_real_browser.py` | **[NEW]** 4 real browser tests (Success, Missing Target, Stale Target, Loop Break) | Verification of real browser failure handling | Browser test suite |
 
 ---
 
