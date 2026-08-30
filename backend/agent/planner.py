@@ -73,20 +73,68 @@ class AgentPlanner:
         self.metrics["tasks_created"] += 1
         return task
 
+    def check_task_completion(
+        self,
+        task: Optional[AgentTask] = None,
+        sanitized_elements: List[Dict[str, Any]] = None,
+        current_url: str = ""
+    ) -> Tuple[bool, str]:
+        """
+        Evaluates whether the active task has reached its completion criteria.
+        Checks objective progression, semantic evidence in perception, and URL destination.
+        """
+        active_task = task or self.current_task
+        if not active_task:
+            return False, "NO_ACTIVE_TASK"
+
+        # 1. Check if all objectives were completed
+        if active_task.current_objective_index >= len(active_task.objectives):
+            return True, "ALL_OBJECTIVES_COMPLETED"
+
+        # 2. Check semantic evidence in perception
+        elements = sanitized_elements or []
+        page_text = " ".join(
+            f"{e.get('text', '')} {e.get('label', '')} {e.get('attributes', {}).get('placeholder', '')}"
+            for e in elements
+        ).lower()
+
+        goal_lower = active_task.goal.lower()
+
+        # Check search results presence
+        if any(k in goal_lower for k in ["search", "find", "lookup"]):
+            query_m = self.decomposer._extract_search_query(active_task.goal).lower()
+            if query_m and query_m in page_text:
+                if any(w in page_text for w in ["result", "search results", "found", "articles", "showing"]):
+                    return True, f"Search results for '{query_m}' verified on page"
+
+        # Check authentication / login completion
+        if any(k in goal_lower for k in ["login", "sign in", "auth"]):
+            if any(w in page_text for w in ["welcome", "dashboard", "logout", "sign out", "profile"]):
+                return True, "Authenticated session confirmed"
+
+        # Check checkout completion
+        if any(k in goal_lower for k in ["checkout", "payment", "order"]):
+            if any(w in page_text for w in ["order confirmed", "receipt", "thank you", "payment successful"]):
+                return True, "Payment and order confirmed"
+
+        return False, "IN_PROGRESS"
+
     def plan_next_step(
         self,
         sanitized_elements: List[Dict[str, Any]],
         history: List[Dict[str, Any]] = None,
         task_goal: Optional[str] = None,
-        user_confirmed: bool = False
+        user_confirmed: bool = False,
+        current_url: str = ""
     ) -> Tuple[Optional[CandidateAction], ValidationResult, AgentState]:
         """
         Executes a single reasoning iteration of the agent planning loop:
           1. Transitions state: IDLE -> PLANNING
-          2. Selects active objective
-          3. Generates and ranks candidate actions
-          4. Validates top candidate
-          5. Records explainable trace
+          2. Evaluates task completion
+          3. Selects active objective
+          4. Generates and ranks candidate actions
+          5. Validates top candidate
+          6. Records explainable trace
         """
         t0 = time.perf_counter()
 
@@ -101,11 +149,13 @@ class AgentPlanner:
         if task.is_paused:
             return None, ValidationResult(allowed=False, reason="AGENT_PAUSED"), AgentState.PAUSED
 
-        # Check objective bounds
-        if task.current_objective_index >= len(task.objectives):
-            self.state_machine.transition_to(AgentState.COMPLETED, "All objectives completed")
+        # Check objective bounds & dynamic task completion
+        is_completed, comp_reason = self.check_task_completion(task, sanitized_elements, current_url)
+        if is_completed or task.current_objective_index >= len(task.objectives):
+            self.state_machine.transition_to(AgentState.COMPLETED, f"Task completed: {comp_reason}")
             task.status = AgentState.COMPLETED
-            return None, ValidationResult(allowed=False, reason="TASK_COMPLETED"), AgentState.COMPLETED
+            self.metrics["tasks_completed"] += 1
+            return None, ValidationResult(allowed=False, reason=comp_reason), AgentState.COMPLETED
 
         active_objective = task.objectives[task.current_objective_index]
         active_objective.status = ObjectiveStatus.IN_PROGRESS

@@ -2,8 +2,10 @@
 PrivyBrowse AI — Candidate Action Generator
 Consumes perceived elements, active objective, and sanitized layout context
 to generate ranked candidate browser actions (CLICK, TYPE, SCROLL, etc.).
+Derives typing payloads and element associations dynamically.
 """
 
+import re
 from typing import List, Dict, Any, Optional
 from backend.agent.schemas import (
     CandidateAction, ActionType, Objective, RiskLevel
@@ -17,6 +19,19 @@ class CandidateGenerator:
 
     def __init__(self):
         pass
+
+    def _extract_query_payload(self, objective: Objective, goal_text: str) -> str:
+        """Extracts dynamic query string from objective description or goal."""
+        m = re.search(r"'(.*?)'", objective.description)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+        
+        # Fallback to goal text extraction
+        query_m = re.search(r'(?:search\s+for|find|lookup)\s+["\']?([^"\',.;\n]+?)["\']?(?:\s+on|\s+and|$|\.)', goal_text, re.IGNORECASE)
+        if query_m:
+            return query_m.group(1).strip()
+            
+        return goal_text.strip()
 
     def generate_candidates(
         self,
@@ -45,7 +60,28 @@ class CandidateGenerator:
 
         # 2. Iterate through perceived elements
         for el in fused_elements:
-            el_type = el.get("type", "ELEMENT")
+            raw_type = str(el.get("type") or el.get("tag") or el.get("tag_name") or el.get("tagName") or "ELEMENT").upper()
+            attrs = el.get("attributes", {})
+            input_type_attr = str(el.get("inputType") or attrs.get("type", "") or el.get("type", "")).lower()
+            tag_name = str(el.get("tag") or el.get("tag_name") or "").lower()
+
+            is_input = (
+                raw_type in ("INPUT", "TEXTAREA") or
+                tag_name in ("input", "textarea") or
+                input_type_attr in ("text", "search", "email", "password", "tel", "number", "url", "textarea")
+            )
+            is_button = (
+                raw_type in ("BUTTON", "CHECKBOX", "SELECT") or
+                tag_name in ("button", "select") or
+                input_type_attr in ("button", "submit", "reset") or
+                attrs.get("role") in ("button", "tab", "menuitem")
+            )
+            is_link = (
+                raw_type in ("LINK", "A") or
+                tag_name in ("a", "link") or
+                attrs.get("role") == "link"
+            )
+
             el_id = el.get("id", "")
             bbox_raw = el.get("bbox", [0, 0, 0, 0])
             if isinstance(bbox_raw, list) and len(bbox_raw) >= 4:
@@ -67,57 +103,51 @@ class CandidateGenerator:
 
             el_text = el.get("text", "")
             el_val = el.get("value", "")
-            attrs = el.get("attributes", {})
             conf = float(el.get("confidence", 0.85))
 
             cx = (bbox[0] + bbox[2]) / 2.0
             cy = (bbox[1] + bbox[3]) / 2.0
 
             combined_str = (
-                f"{el_text} {el_val} {attrs.get('placeholder', '')} "
-                f"{attrs.get('name', '')} {attrs.get('id', '')} "
+                f"{el_text} {el_val} {el.get('placeholder', '')} {attrs.get('placeholder', '')} "
+                f"{el.get('name', '')} {attrs.get('name', '')} {attrs.get('id', '')} "
                 f"{attrs.get('class', '')} {attrs.get('type', '')} {el_id}"
             ).lower()
 
             # (A) Input & Typing Candidates
-            if el_type in ("INPUT", "TEXTAREA"):
-                # Determine what to type based on objective intent
+            if is_input:
                 type_payload = None
                 risk = RiskLevel.LOW
                 req_confirm = False
 
                 if objective.semantic_intent in ("search_input", "search_query"):
-                    # Extract query from goal
-                    query = "Chandrayaan-3"
-                    if "for " in goal_text.lower():
-                        query = goal_text.lower().split("for ", 1)[1].split(" and")[0].strip()
-                    type_payload = query.title()
+                    type_payload = self._extract_query_payload(objective, goal_text)
 
                 elif objective.semantic_intent == "input_username":
-                    type_payload = "user@sih2026.gov.in"
+                    m_email = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', goal_text)
+                    type_payload = m_email.group(0) if m_email else "user@sih2026.gov.in"
                     risk = RiskLevel.MEDIUM
 
                 elif objective.semantic_intent == "input_password":
-                    type_payload = "PrivySafePassword123!"
+                    type_payload = "••••••••"
                     risk = RiskLevel.HIGH
-                    req_confirm = False  # Pre-sanitized test credential
+                    req_confirm = False
 
                 elif objective.semantic_intent == "input_contact":
-                    type_payload = "Amit Sharma"
+                    type_payload = "User Contact"
 
                 elif objective.semantic_intent == "input_address":
-                    type_payload = "12, MG Road, Bangalore, KA"
+                    type_payload = "123 Innovation Boulevard"
 
                 elif objective.semantic_intent == "input_card":
-                    type_payload = "4111 2222 3333 4444"
+                    type_payload = "•••• •••• •••• 4444"
                     risk = RiskLevel.HIGH
 
-                # Create TYPE candidate
                 candidates.append(CandidateAction(
                     action=ActionType.TYPE,
                     target_id=el_id,
                     target={"x": cx, "y": cy},
-                    target_description=f"Input field '{attrs.get('placeholder') or el_id}'",
+                    target_description=f"Input field '{el.get('placeholder') or attrs.get('placeholder') or el.get('name') or attrs.get('name') or el_id}'",
                     text=type_payload or "Input value",
                     confidence=conf,
                     risk_level=risk,
@@ -126,8 +156,7 @@ class CandidateGenerator:
                 ))
 
             # (B) Button & Submission Candidates
-            elif el_type in ("BUTTON", "CHECKBOX", "SELECT"):
-                # Check for high-risk action indicators (payments, delete, buy)
+            elif is_button:
                 risk = RiskLevel.LOW
                 req_confirm = False
                 if any(w in combined_str for w in ["pay", "purchase", "order", "charge", "₹", "$"]):
@@ -141,7 +170,7 @@ class CandidateGenerator:
                     action=ActionType.CLICK,
                     target_id=el_id,
                     target={"x": cx, "y": cy},
-                    target_description=f"Button '{el_text or attrs.get('placeholder') or el_id}'",
+                    target_description=f"Button '{el_text or el.get('placeholder') or attrs.get('placeholder') or attrs.get('name') or el_id}'",
                     confidence=conf,
                     risk_level=risk,
                     requires_confirmation=req_confirm,
@@ -149,7 +178,7 @@ class CandidateGenerator:
                 ))
 
             # (C) Link Candidates
-            elif el_type == "LINK":
+            elif is_link:
                 candidates.append(CandidateAction(
                     action=ActionType.CLICK,
                     target_id=el_id,

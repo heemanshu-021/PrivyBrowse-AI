@@ -615,12 +615,84 @@ The redactor applies OpenCV transformations directly onto the image pixel buffer
 
 ## 17. Agent Brain & Reasoning Engine
 
-* **Algorithm**: Heuristic Multi-Factor Ranking.
-* **Scoring Formula**:
-  $$\text{Score} = 0.35 \cdot S_{\text{semantic}} + 0.25 \cdot C_{\text{perception}} + 0.20 \cdot A_{\text{type}} + 0.20 \cdot V_{\text{visibility}} - P_{\text{history}}$$
-* **Goal Decomposition**:
-  * `"Search X"` $\rightarrow$ (1) Locate Search Input $\rightarrow$ (2) Type Query $\rightarrow$ (3) Click Submit $\rightarrow$ (4) Verify Results.
-  * `"Login"` $\rightarrow$ (1) Type Email $\rightarrow$ (2) Type Password $\rightarrow$ (3) Click Sign In $\rightarrow$ (4) Verify Dashboard.
+The PrivyBrowse-AI Reasoning & Planning Engine operates strictly on-device, consuming sanitized layout context without sending raw credentials to cloud LLMs. It features dynamic goal understanding, evidence-based candidate generation, multi-factor action ranking, safety validation, outcome verification, and closed-loop re-planning.
+
+### Closed-Loop Architecture
+
+```
+                 ┌──────────────────────────────────────┐
+                 │     USER GOAL (Natural Language)      │
+                 └──────────────────┬───────────────────┘
+                                    │
+                                    ▼
+                 ┌──────────────────────────────────────┐
+                 │ GoalDecomposer (decomposer.py)       │
+                 │ Dynamic Query / Target Extraction    │
+                 └──────────────────┬───────────────────┘
+                                    │
+ ┌──────────────────────────────────┴────────────────────────────────────┐
+ │                                                                       │
+ │                        CLOSED-LOOP AGENT CYCLE                        │
+ │                                                                       │
+ │   1. OBSERVE & SANITIZE                                               │
+ │      DOM + Screenshot + OCR ──► PerceptionPipeline ──► PrivacyGate   │
+ │                                                         │             │
+ │                                                         ▼             │
+ │   2. EVALUATE TASK COMPLETION (AgentPlanner.check_task_completion)    │
+ │      Checks if search results, auth dashboard, or receipt are visible │
+ │                                                         │             │
+ │                                                         ▼             │
+ │   3. INJECTION GUARD (InjectionGuard.sanitize_untrusted_elements)     │
+ │      Neutralizes adversarial instructions embedded in untrusted text  │
+ │                                                         │             │
+ │                                                         ▼             │
+ │   4. GENERATE CANDIDATE ACTIONS (CandidateGenerator)                  │
+ │      Extracts typing payloads and centerpoints from layout elements   │
+ │                                                         │             │
+ │                                                         ▼             │
+ │   5. MULTI-FACTOR ACTION SCORING (ActionScorer)                       │
+ │      Score = 0.40*Semantic + 0.25*Conf + 0.20*Type + 0.15*Vis        │
+ │              - HistoryPenalty - RiskPenalty                           │
+ │                                                         │             │
+ │                                                         ▼             │
+ │   6. SAFETY VALIDATION (ActionValidator)                              │
+ │      Enforces bounds, loop prevention, action budget, financial gate  │
+ │                                                         │             │
+ │                                                         ▼             │
+ │   7. EXECUTE REAL BROWSER ACTION (ActionExecutor / Bridge)            │
+ │      Dispatches CLICK / TYPE / SCROLL to Chrome tab via Extension     │
+ │                                                         │             │
+ │                                                         ▼             │
+ │   8. OUTCOME VERIFICATION (ActionVerifier)                            │
+ │      Signals: PAGE_NAVIGATED | DOM_MUTATED | INPUT_UPDATED | SCROLLED │
+ │                                                         │             │
+ │                                                         ▼             │
+ │   9. RE-OBSERVE & RE-PLAN                                             │
+ │      Updates working memory & proceeds to next turn dynamically       │
+ │                                                                       │
+ └───────────────────────────────────────────────────────────────────────┘
+```
+
+### Dynamic Goal Decomposition
+
+The `GoalDecomposer` (`backend/agent/decomposer.py`) parses natural language task strings dynamically without hardcoded demo fallbacks:
+* **Search & Lookup**: Extracts query terms (`"Aditya-L1 Mission"`, `"Quantum Computing"`, `"ISRO Telemetry"`) and domain targets (`"on Wikipedia"`, `"on Google"`) to create sub-objectives (`search_input`, `submit_search`, `select_result`, `verify_completion`).
+* **Authentication & Login**: Identifies credential input fields and maps authentication flows (`input_username`, `input_password`, `submit_login`, `verify_auth`).
+* **Checkout & Payment**: Maps multi-field billing forms and flags high-risk payment confirmation buttons (`input_contact`, `input_address`, `input_card`, `submit_payment`).
+* **Section Inspection & Scroll**: Identifies off-screen document topics and creates viewport scroll steps (`scroll_page`, `locate_section`).
+
+### Dynamic Candidate Generation & Scoring
+
+* **Dynamic Payload Resolution**: For typing objectives, payloads are resolved from active objective context or natural language input rather than static demonstration constants.
+* **Polymorphic Bounding Box Support**: Seamlessly processes bounding boxes in `[x1, y1, x2, y2]`, `{"x", "y", "width", "height"}`, and `BoundingBox` object representations, computing accurate click centerpoints $(cx, cy)$.
+* **Multi-Factor Scoring Formula**:
+  $$\text{Score} = 0.40 \cdot S_{\text{semantic}} + 0.25 \cdot C_{\text{perception}} + 0.20 \cdot A_{\text{type}} + 0.15 \cdot V_{\text{visibility}} - P_{\text{history}} - P_{\text{risk}}$$
+  * $S_{\text{semantic}}$: Keyword and semantic intent overlap across label, text, placeholder, name, ID, and OCR tokens.
+  * $C_{\text{perception}}$: Perception fusion confidence score ($\ge 0.50$).
+  * $A_{\text{type}}$: Alignment between active objective target type and layout element tag/role.
+  * $V_{\text{visibility}}$: Visual prominence and interactability factor ($1.0$ for VISIBLE, $0.6$ for PARTIALLY_VISIBLE, $0.1$ for OFFSCREEN).
+  * $P_{\text{history}}$: Repeat penalty ($0.15 \times \text{recent attempts}$) to prevent oscillations.
+  * $P_{\text{risk}}$: Unconfirmed high-risk operation penalty ($0.10$).
 
 ---
 
@@ -629,11 +701,12 @@ The redactor applies OpenCV transformations directly onto the image pixel buffer
 | Action Type | Parameters | Safety Check | Real Browser Dispatch |
 | :--- | :--- | :--- | :--- |
 | `CLICK` | `{ target: {x, y}, target_id }` | Bounding bounds check $(1920\times 1080)$, visibility check | Dispatches mouse click event |
-| `TYPE` | `{ target: {x, y}, text }` | Sensitive text masked in logs | Dispatches keyboard input |
+| `TYPE` | `{ target: {x, y}, text }` | Sensitive text masked in logs, React prototype setter | Dispatches keyboard input |
 | `SCROLL` | `{ direction, delta_px }` | Clamped to max 800px step | Dispatches viewport scroll |
 | `PRESS_KEY` | `{ key: 'Enter' }` | Whitelisted safe keys only | Dispatches keydown/keyup |
 | `NAVIGATE` | `{ url }` | NavigationGuard blocks `javascript:`/`data:` | Initiates tab navigation |
 | `WAIT` | `{ duration_ms }` | Capped to timeout limit | Delays for DOM stabilization |
+| `FINISH` | `{ reason }` | Evaluates task completion criteria | Completes agent session |
 
 ### 18A. Browser Action Bridge (Real Browser Execution)
 

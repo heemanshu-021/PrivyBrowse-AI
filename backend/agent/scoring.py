@@ -111,9 +111,10 @@ class ActionScorer:
             return 0.50
 
         el_text = (element.get("text", "") or "").lower()
-        el_placeholder = (element.get("attributes", {}).get("placeholder", "") or "").lower()
+        attrs = element.get("attributes", {})
+        el_placeholder = (element.get("placeholder", "") or attrs.get("placeholder", "") or "").lower()
         el_id = (element.get("id", "") or "").lower()
-        el_name = (element.get("attributes", {}).get("name", "") or "").lower()
+        el_name = (element.get("name", "") or attrs.get("name", "") or "").lower()
 
         combined = f"{el_text} {el_placeholder} {el_id} {el_name}"
 
@@ -125,9 +126,10 @@ class ActionScorer:
             return 0.85
 
         # Generic semantic intent check
-        if objective.semantic_intent in ("search_input", "search_query") and element.get("type") == "INPUT":
+        el_type = str(element.get("type") or element.get("tag") or element.get("tag_name") or "").upper()
+        if objective.semantic_intent in ("search_input", "search_query") and el_type in ("INPUT", "TEXTAREA"):
             return 0.80
-        if objective.semantic_intent in ("submit_search", "submit_login", "submit_payment") and element.get("type") == "BUTTON":
+        if objective.semantic_intent in ("submit_search", "submit_login", "submit_payment") and el_type in ("BUTTON", "SUBMIT"):
             return 0.80
 
         return 0.40
