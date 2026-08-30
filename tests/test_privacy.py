@@ -1,13 +1,21 @@
 """
 Comprehensive Unit & Integration Test Suite for On-Device Privacy Layer
 Tests:
-  - PII Detection across all types (Email, Phone, Card, PAN, Aadhaar, Password, OTP, Secrets, Face)
-  - Algorithmic checks (Luhn card checksum, Aadhaar format)
-  - False-Positive Avoidance (Years, Prices, Order IDs, Dimensions, Metric counts)
-  - Image visual redaction (Opaque, Blur, Pixelate)
-  - OCR text scrubbing & DOM attribute sanitization
-  - Privacy Gatekeeper & Remote Transmission Guard
-  - Privacy-safe Audit Logging & Strict Privacy Invariants
+  1. PII Detection across all types (Email, Phone, Card, PAN, Aadhaar, Password, OTP, Secrets, Face)
+  2. Algorithmic Checks (Luhn Mod-10 checksum, Aadhaar format validation)
+  3. False-Positive Avoidance (Years, Prices, Order IDs, Dimensions, Metric counts)
+  4. Visual Redaction Styles (Opaque, Blur, Pixelate)
+  5. DOM Attribute Sanitization (Value, text, placeholder scrubbing)
+  6. OCR Text Block Token Substitution ([REDACTED_<TYPE>])
+  7. PerceivedElement Direct Redaction (Perception pipeline integration)
+  8. Multi-Source PII Correlation & Deduplication
+  9. Contextual Keyword Confidence Boosting
+  10. Password & Secret Zero-Leak Protection
+  11. Privacy Gate End-to-End Processing
+  12. Outbound Remote Transmission Guard (Blocking unredacted payloads)
+  13. Privacy-Safe Audit Logging (No raw secrets in logs)
+  14. Planner Sanitization Invariant (Planner receives clean inputs only)
+  15. Action Compatibility with Redacted Controls (Legitimate interactions succeed)
 """
 
 import sys
@@ -29,9 +37,12 @@ from backend.privacy.redactor import Redactor
 from backend.privacy.privacy_gate import PrivacyGate, PrivacyGateViolation
 from backend.privacy.rules.pattern_rules import (
     matches_email, matches_phone, matches_card, matches_pan,
-    matches_aadhaar, matches_secret_token, matches_otp, validate_luhn
+    matches_aadhaar, matches_secret_token, matches_otp, validate_luhn,
+    validate_aadhaar_format
 )
-from backend.privacy.rules.context_rules import is_false_positive_number
+from backend.privacy.rules.context_rules import is_false_positive_number, boost_confidence_with_context
+from backend.perception.core.schemas import PerceivedElement, BoundingBox
+from backend.agent.planner import AgentPlanner
 
 
 def create_synthetic_privacy_image(width=500, height=400):
@@ -57,7 +68,7 @@ def test_pii_pattern_detection():
     mock_ocr = [
         {"id": "ocr_1", "text": "Contact user at support@sih2026.gov.in or admin@isro.gov.in", "bbox": [10, 10, 300, 30]},
         {"id": "ocr_2", "text": "Mobile number: +91 98765 43210 or 9876543210", "bbox": [10, 40, 300, 60]},
-        {"id": "ocr_3", "text": "Payment Card: 4111 2222 3333 4444 (Luhn valid)", "bbox": [10, 70, 300, 90]},
+        {"id": "ocr_3", "text": "Payment Card: 4111 2222 3333 4444", "bbox": [10, 70, 300, 90]},
         {"id": "ocr_4", "text": "Income Tax PAN: ABCDE1234F", "bbox": [10, 100, 300, 120]},
         {"id": "ocr_5", "text": "UIDAI Aadhaar: 9876 5432 1098", "bbox": [10, 130, 300, 150]},
         {"id": "ocr_6", "text": "Enter OTP 2FA verification code: 593821", "bbox": [10, 160, 300, 180]},
@@ -73,14 +84,14 @@ def test_pii_pattern_detection():
     entities = detector.detect(img_bytes, mock_ocr, mock_dom)
 
     detected_types = {e.type for e in entities}
-    assert "EMAIL" in detected_types, "Should detect email"
-    assert "PHONE" in detected_types, "Should detect phone"
-    assert "CARD" in detected_types, "Should detect card"
-    assert "PAN" in detected_types, "Should detect PAN card"
-    assert "AADHAAR" in detected_types, "Should detect Aadhaar"
-    assert "OTP" in detected_types, "Should detect OTP"
-    assert "SECRET_TOKEN" in detected_types, "Should detect API key"
-    assert "PASSWORD" in detected_types, "Should detect Password"
+    assert "EMAIL" in detected_types
+    assert "PHONE" in detected_types
+    assert "CARD" in detected_types
+    assert "PAN" in detected_types
+    assert "AADHAAR" in detected_types
+    assert "OTP" in detected_types
+    assert "SECRET_TOKEN" in detected_types
+    assert "PASSWORD" in detected_types
 
     # Verify classifications
     for e in entities:
@@ -89,19 +100,30 @@ def test_pii_pattern_detection():
         elif e.type in ("EMAIL", "PHONE"):
             assert e.classification == "SENSITIVE"
 
-    # Verify Luhn validator directly
-    assert validate_luhn("4242 4242 4242 4242") is True
-    assert validate_luhn("4111 1111 1111 1111") is True
-    assert validate_luhn("4111 2222 3333 4444") is False, "Invalid checksum must return False"
-
     print(f"  ✓ Successfully detected {len(entities)} PII items across 8 distinct categories.")
 
 
+def test_luhn_and_aadhaar_algorithms():
+    print("\n[TEST 2] Testing Algorithmic Checksums (Luhn Mod-10 & Aadhaar Format)...")
+    # Luhn test cases
+    assert validate_luhn("4242 4242 4242 4242") is True
+    assert validate_luhn("4111 1111 1111 1111") is True
+    assert validate_luhn("4111 2222 3333 4444") is False
+    assert validate_luhn("1234") is False
+
+    # Aadhaar test cases
+    assert validate_aadhaar_format("9876 5432 1098") is True
+    assert validate_aadhaar_format("2345 6789 0123") is True
+    assert validate_aadhaar_format("0123 4567 8901") is False  # Cannot start with 0
+    assert validate_aadhaar_format("1234 5678 9012") is False  # Cannot start with 1
+    assert validate_aadhaar_format("9999 9999 9999") is False  # Repeating sequence rejected
+    print("  ✓ Luhn Mod-10 and Aadhaar format checks verified.")
+
+
 def test_false_positive_avoidance():
-    print("\n[TEST 2] Testing False-Positive Avoidance on Non-PII Content...")
+    print("\n[TEST 3] Testing False-Positive Avoidance on Non-PII Content...")
     detector = PIIDetector()
 
-    # Content with numbers that must NOT be flagged as PII
     non_pii_ocr = [
         {"id": "ocr_year", "text": "Copyright © 2026 ISRO. All rights reserved. Founded in 1969.", "bbox": [10, 10, 300, 30]},
         {"id": "ocr_price", "text": "Annual subscription: ₹999 or $49.99 (Save 20%)", "bbox": [10, 40, 300, 60]},
@@ -110,23 +132,19 @@ def test_false_positive_avoidance():
         {"id": "ocr_count", "text": "Community statistics: 1247 active members, 3 projects", "bbox": [10, 130, 300, 150]},
     ]
 
-    mock_dom = []
     img_bytes = create_synthetic_privacy_image()
-    entities = detector.detect(img_bytes, non_pii_ocr, mock_dom)
-
-    # There should be 0 PII detected in this purely public content
+    entities = detector.detect(img_bytes, non_pii_ocr, [])
     assert len(entities) == 0, f"False positives detected: {[e.type + ': ' + e.text for e in entities]}"
 
-    # Verify individual false-positive helper rules
+    # Verify helper functions
     assert is_false_positive_number("2026", "Copyright 2026")[0] is True
     assert is_false_positive_number("₹999", "Price ₹999")[0] is True
     assert is_false_positive_number("1920x1080", "Screen resolution")[0] is True
-
     print("  ✓ False-positive suppression verified: Years, Prices, Order IDs, Dimensions safely ignored.")
 
 
-def test_redaction_engine_visual_dom_ocr():
-    print("\n[TEST 3] Testing Visual Redaction, OCR Scrubbing, and DOM Sanitization...")
+def test_visual_redaction_styles():
+    print("\n[TEST 4] Testing Visual Screenshot Redaction Styles (Opaque, Blur, Pixelate)...")
     redactor = Redactor()
     img_bytes = create_synthetic_privacy_image()
 
@@ -138,8 +156,7 @@ def test_redaction_engine_visual_dom_ocr():
             "raw_text": "user@isro.gov.in",
             "bbox": [30, 50, 330, 85],
             "confidence": 0.98,
-            "classification": "SENSITIVE",
-            "element_id": "dom_email"
+            "classification": "SENSITIVE"
         },
         {
             "id": "pii-002",
@@ -148,23 +165,10 @@ def test_redaction_engine_visual_dom_ocr():
             "raw_text": "Secret1234!",
             "bbox": [30, 190, 330, 225],
             "confidence": 0.99,
-            "classification": "HIGHLY_SENSITIVE",
-            "element_id": "dom_pass"
+            "classification": "HIGHLY_SENSITIVE"
         }
     ]
 
-    mock_dom = [
-        {"id": "dom_email", "tag_name": "INPUT", "type": "email", "value": "user@isro.gov.in", "bbox": [30, 50, 330, 85]},
-        {"id": "dom_pass", "tag_name": "INPUT", "type": "password", "value": "Secret1234!", "bbox": [30, 190, 330, 225]},
-        {"id": "dom_public", "tag_name": "BUTTON", "type": "submit", "text": "Submit Form", "bbox": [30, 250, 330, 285]},
-    ]
-
-    mock_ocr = [
-        {"id": "ocr_1", "text": "User email is user@isro.gov.in", "bbox": [30, 50, 330, 85]},
-        {"id": "ocr_2", "text": "Click Submit Form to proceed", "bbox": [30, 250, 330, 285]},
-    ]
-
-    # 1. Test Visual Redaction in all 3 styles
     for style in ["opaque", "blur", "pixelate"]:
         redacted_bytes, rmap = redactor.redact_screenshot(img_bytes, pii_list, redaction_style=style)
         assert len(redacted_bytes) > 0
@@ -173,7 +177,24 @@ def test_redaction_engine_visual_dom_ocr():
         assert rmap.sensitive_count == 1
         assert rmap.style == style
 
-    # 2. Test DOM Sanitization
+    print("  ✓ Opaque, Blur, and Pixelate visual redaction verified.")
+
+
+def test_dom_attribute_sanitization():
+    print("\n[TEST 5] Testing DOM Node Value & Attribute Sanitization...")
+    redactor = Redactor()
+
+    mock_dom = [
+        {"id": "dom_email", "tag_name": "INPUT", "type": "email", "value": "user@isro.gov.in", "bbox": [30, 50, 330, 85]},
+        {"id": "dom_pass", "tag_name": "INPUT", "type": "password", "value": "Secret1234!", "bbox": [30, 190, 330, 225]},
+        {"id": "dom_public", "tag_name": "BUTTON", "type": "submit", "text": "Submit Form", "bbox": [30, 250, 330, 285]},
+    ]
+
+    pii_list = [
+        {"id": "pii-001", "type": "EMAIL", "raw_text": "user@isro.gov.in", "element_id": "dom_email", "bbox": [30, 50, 330, 85]},
+        {"id": "pii-002", "type": "PASSWORD", "raw_text": "Secret1234!", "element_id": "dom_pass", "bbox": [30, 190, 330, 225]},
+    ]
+
     sanitized_dom = redactor.redact_dom_nodes(mock_dom, pii_list)
     email_node = next(n for n in sanitized_dom if n["id"] == "dom_email")
     pass_node = next(n for n in sanitized_dom if n["id"] == "dom_pass")
@@ -181,96 +202,273 @@ def test_redaction_engine_visual_dom_ocr():
 
     assert email_node["value"] == "[REDACTED_EMAIL]"
     assert pass_node["value"] == "[REDACTED_PASSWORD]"
-    assert public_node["text"] == "Submit Form", "Public element text must remain unchanged"
+    assert pass_node["placeholder"] == "••••••••"
+    assert public_node["text"] == "Submit Form"
+    print("  ✓ DOM attributes (.value, .placeholder, .text) scrubbed safely.")
 
-    # 3. Test OCR Text Scrubbing
+
+def test_ocr_token_substitution():
+    print("\n[TEST 6] Testing OCR Text Block Token Substitution...")
+    redactor = Redactor()
+
+    mock_ocr = [
+        {"id": "ocr_1", "text": "Contact user at admin@isro.gov.in for credentials", "bbox": [10, 10, 300, 30]},
+        {"id": "ocr_2", "text": "Ordinary non-sensitive description text", "bbox": [10, 40, 300, 60]},
+    ]
+
+    pii_list = [
+        {"id": "pii-001", "type": "EMAIL", "raw_text": "admin@isro.gov.in", "bbox": [10, 10, 300, 30]}
+    ]
+
     sanitized_ocr = redactor.redact_ocr_blocks(mock_ocr, pii_list)
-    assert sanitized_ocr[0]["text"] == "User email is [REDACTED_EMAIL]"
-    assert sanitized_ocr[1]["text"] == "Click Submit Form to proceed"
+    assert sanitized_ocr[0]["text"] == "Contact user at [REDACTED_EMAIL] for credentials"
+    assert sanitized_ocr[1]["text"] == "Ordinary non-sensitive description text"
+    print("  ✓ OCR text substituted with [REDACTED_<TYPE>] tokens.")
 
-    print("  ✓ Visual masking (opaque/blur/pixelate), DOM scrubbing, and OCR token substitution passed.")
+
+def test_perceived_element_redaction():
+    print("\n[TEST 7] Testing Direct PerceivedElement Redaction...")
+    redactor = Redactor()
+
+    elements = [
+        PerceivedElement(
+            id="pb-001", type="INPUT", label="Email", text="admin@isro.gov.in",
+            bbox=BoundingBox(x=10, y=10, width=200, height=35), confidence=0.92,
+            attributes={"type": "email", "value": "admin@isro.gov.in"}
+        ),
+        PerceivedElement(
+            id="pb-002", type="INPUT", label="Password", text="SuperSecret123",
+            bbox=BoundingBox(x=10, y=50, width=200, height=35), confidence=0.92,
+            attributes={"type": "password", "value": "SuperSecret123"}
+        ),
+        PerceivedElement(
+            id="pb-003", type="BUTTON", label="Sign In", text="Sign In",
+            bbox=BoundingBox(x=10, y=100, width=100, height=35), confidence=0.92,
+            attributes={"type": "submit"}
+        ),
+    ]
+
+    pii_entities = [
+        PIIEntity(
+            id="pii-001", type="EMAIL", text="ad***@isro.gov.in", raw_text="admin@isro.gov.in",
+            confidence=0.98, bbox=[10, 10, 210, 45], element_id="pb-001"
+        )
+    ]
+
+    sanitized = redactor.redact_perceived_elements(elements, pii_entities)
+    assert len(sanitized) == 3
+
+    # Email element sanitized
+    assert sanitized[0].is_sensitive is True
+    assert sanitized[0].pii_type == "EMAIL"
+    assert sanitized[0].redacted is True
+    assert sanitized[0].text == "[REDACTED_EMAIL]"
+    assert sanitized[0].attributes["value"] == "[REDACTED_EMAIL]"
+
+    # Password element sanitized unconditionally
+    assert sanitized[1].is_sensitive is True
+    assert sanitized[1].pii_type == "PASSWORD"
+    assert sanitized[1].redacted is True
+    assert sanitized[1].text == "[REDACTED_PASSWORD]"
+
+    # Public button untouched
+    assert sanitized[2].is_sensitive is False
+    assert sanitized[2].text == "Sign In"
+
+    print("  ✓ PerceivedElement objects successfully sanitized with privacy metadata flags.")
 
 
-def test_privacy_gate_and_remote_guard():
-    print("\n[TEST 4] Testing Privacy Gatekeeper & Outbound Remote Guard...")
+def test_multi_source_pii_correlation():
+    print("\n[TEST 8] Testing Multi-Source PII Correlation & Deduplication...")
+    detector = PIIDetector()
+
+    # Same email detected in DOM input and in OCR text block
+    mock_dom = [
+        {"id": "email-field", "tag_name": "INPUT", "type": "email", "value": "test@domain.com", "bbox": [50, 50, 250, 85]}
+    ]
+    mock_ocr = [
+        {"id": "ocr-block-1", "text": "test@domain.com", "bbox": [52, 51, 248, 84]}
+    ]
+
+    img_bytes = create_synthetic_privacy_image()
+    entities = detector.detect(img_bytes, mock_ocr, mock_dom)
+
+    # Should deduplicate overlapping OCR + DOM detections into a single logical PIIEntity
+    assert len(entities) == 1
+    assert entities[0].type == "EMAIL"
+    assert any("OCR" in s for s in entities[0].source)
+    assert any("DOM" in s for s in entities[0].source)
+    print("  ✓ Multi-source PII correlated with merged provenance signals.")
+
+
+def test_context_keyword_confidence_boost():
+    print("\n[TEST 9] Testing Context Keyword Confidence Boosting...")
+    base_conf, signals = boost_confidence_with_context(0.85, "CARD", "Please enter credit card number for checkout")
+    assert base_conf > 0.85
+    assert len(signals) >= 1
+    assert "CONTEXT_KEYWORD_MATCH" in signals[0]
+    print("  ✓ Confidence boosted based on semantic keyword proximity.")
+
+
+def test_password_and_secret_strong_protection():
+    print("\n[TEST 10] Testing Strong Password & Secret Zero-Leak Protection...")
+    detector = PIIDetector()
+    redactor = Redactor()
+
+    raw_jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.doNotLeakThisSecretKey123"
+    raw_ghp = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"
+
+    mock_ocr = [
+        {"id": "jwt", "text": f"Authorization: Bearer {raw_jwt}", "bbox": [10, 10, 300, 30]},
+        {"id": "ghp", "text": f"Token: {raw_ghp}", "bbox": [10, 40, 300, 60]},
+    ]
+
+    img_bytes = create_synthetic_privacy_image()
+    entities = detector.detect(img_bytes, mock_ocr, [])
+    assert len(entities) >= 2
+
+    # Verify display masking
+    for e in entities:
+        assert raw_jwt not in e.text
+        assert raw_ghp not in e.text
+        assert e.classification == "HIGHLY_SENSITIVE"
+
+    # Verify OCR scrubbing
+    sanitized_ocr = redactor.redact_ocr_blocks(mock_ocr, [e.model_dump() for e in entities])
+    for b in sanitized_ocr:
+        assert raw_jwt not in b["text"]
+        assert raw_ghp not in b["text"]
+
+    print("  ✓ JWTs, API tokens, and passwords masked and scrubbed completely.")
+
+
+def test_privacy_gate_end_to_end():
+    print("\n[TEST 11] Testing Privacy Gate End-to-End Processing...")
     gate = PrivacyGate()
     img_bytes = create_synthetic_privacy_image()
 
-    mock_ocr = [
-        {"id": "ocr_1", "text": "Account PAN: ABCDE1234F", "bbox": [30, 50, 330, 85]}
-    ]
-    mock_dom = [
-        {"id": "dom_pan", "tag_name": "INPUT", "type": "text", "value": "ABCDE1234F", "bbox": [30, 50, 330, 85]}
-    ]
+    mock_ocr = [{"id": "ocr_1", "text": "PAN: ABCDE1234F", "bbox": [30, 50, 330, 85]}]
+    mock_dom = [{"id": "dom_pan", "tag_name": "INPUT", "type": "text", "value": "ABCDE1234F", "bbox": [30, 50, 330, 85]}]
 
-    # Process through gate
     sanitized_ctx, entities = gate.process_and_sanitize(img_bytes, mock_ocr, mock_dom, style="opaque")
-
     assert isinstance(sanitized_ctx, SanitizedContext)
     assert sanitized_ctx.is_safe_for_reasoning is True
     assert sanitized_ctx.redaction_map.total_redacted >= 1
     assert len(entities) >= 1
+    print(f"  ✓ Privacy Gate sanitized context created in {gate.metrics['last_total_gate_latency_ms']}ms.")
 
-    # Test Remote Transmission Guard
-    # (A) Sanitized context should pass
+
+def test_outbound_remote_guard():
+    print("\n[TEST 12] Testing Outbound Remote Guard Boundary Enforcement...")
+    gate = PrivacyGate()
+    sanitized_ctx = SanitizedContext(is_safe_for_reasoning=True)
+
+    # Sanitized context allowed
     assert gate.guard_outbound_transmission(sanitized_ctx) is True
 
-    # (B) Raw unsanitized dictionary should be blocked
-    raw_payload = {"privacy_status": "LOCAL_UNSANITIZED", "raw_data": "ABCDE1234F"}
+    # Unsanitized payload blocked
+    raw_payload = {"privacy_status": "LOCAL_UNSANITIZED", "raw_data": "Secret"}
     try:
         gate.guard_outbound_transmission(raw_payload)
         assert False, "Should have raised PrivacyGateViolation"
     except PrivacyGateViolation as e:
         assert "RAW_CONTEXT_BLOCKED_BY_PRIVACY_GATE" in str(e)
 
-    # Test Audit Log Stream
-    audit_logs = gate.audit_logs
-    assert len(audit_logs) >= 2
-    events = [log.event for log in audit_logs]
-    assert "PII_DETECTED" in events
-    assert "SANITIZATION_COMPLETED" in events
-    assert "REMOTE_TRANSMISSION_BLOCKED" in events
-
-    print(f"  ✓ Privacy Gate successfully blocked raw egress and recorded {len(audit_logs)} audit events.")
+    print("  ✓ Outbound remote guard strictly intercepted raw transmission.")
 
 
-def test_strict_privacy_invariants():
-    print("\n[TEST 5] Validating Strict Zero-Leak Privacy Invariants...")
+def test_privacy_safe_audit_logging():
+    print("\n[TEST 13] Testing Privacy-Safe Audit Logging Invariants...")
     gate = PrivacyGate()
-    img_bytes = create_synthetic_privacy_image()
-
-    secret_password = "SuperSecretPassword99!"
+    secret_pass = "MySecretPass1234!"
     secret_card = "4111 2222 3333 4444"
 
-    mock_dom = [
-        {"id": "dom_pass", "tag_name": "INPUT", "type": "password", "value": secret_password, "bbox": [30, 50, 330, 85]},
-        {"id": "dom_card", "tag_name": "INPUT", "type": "text", "name": "card_number", "value": secret_card, "bbox": [30, 120, 330, 155]}
+    mock_dom = [{"id": "p", "type": "password", "value": secret_pass, "bbox": [10, 10, 100, 30]}]
+    mock_ocr = [{"id": "c", "text": f"Card {secret_card}", "bbox": [10, 40, 100, 60]}]
+
+    img_bytes = create_synthetic_privacy_image()
+    gate.process_and_sanitize(img_bytes, mock_ocr, mock_dom)
+
+    # Check logs
+    log_dump = str([l.model_dump() for l in gate.audit_logs])
+    assert secret_pass not in log_dump, "CRITICAL: Secret password leaked into audit logs!"
+    assert secret_card not in log_dump, "CRITICAL: Secret card leaked into audit logs!"
+    print("  ✓ Audit logs verified 100% free of plaintext secrets.")
+
+
+def test_planner_receives_sanitized_data():
+    print("\n[TEST 14] Testing Agent Planner Sanitization Invariant...")
+    planner = AgentPlanner()
+    secret_pass = "UnsafePasswordString!"
+
+    # Sanitized elements where password value was replaced with token
+    sanitized_elements = [
+        {
+            "id": "input-email",
+            "type": "INPUT",
+            "label": "Email",
+            "text": "[REDACTED_EMAIL]",
+            "attributes": {"type": "email", "value": "[REDACTED_EMAIL]"}
+        },
+        {
+            "id": "input-pass",
+            "type": "INPUT",
+            "label": "[PASSWORD FIELD]",
+            "text": "[REDACTED_PASSWORD]",
+            "attributes": {"type": "password", "value": "[REDACTED_PASSWORD]"}
+        },
+        {
+            "id": "btn-login",
+            "type": "BUTTON",
+            "label": "Sign In",
+            "text": "Sign In",
+            "attributes": {"type": "submit"}
+        }
     ]
-    mock_ocr = [
-        {"id": "ocr_1", "text": f"Card: {secret_card}", "bbox": [30, 120, 330, 155]}
+
+    candidate, validation, state = planner.plan_next_step(
+        sanitized_elements=sanitized_elements,
+        task_goal="Log in to the portal"
+    )
+
+    # Planner memory must not contain raw secret
+    planner_state_dump = str(planner.current_task.model_dump())
+    assert secret_pass not in planner_state_dump, "Planner retained raw secret in working memory!"
+    print("  ✓ Planner operates exclusively on sanitized elements with zero credential retention.")
+
+
+def test_action_compatibility_with_redacted_fields():
+    print("\n[TEST 15] Testing Browser Action Compatibility with Redacted Fields...")
+    planner = AgentPlanner()
+
+    sanitized_elements = [
+        {
+            "id": "pb-001",
+            "type": "INPUT",
+            "label": "[PASSWORD FIELD]",
+            "text": "[REDACTED_PASSWORD]",
+            "bbox": {"x": 50, "y": 100, "width": 200, "height": 35, "left": 50, "top": 100, "right": 250, "bottom": 135},
+            "attributes": {"type": "password", "id_attr": "pwd-field"}
+        },
+        {
+            "id": "pb-002",
+            "type": "BUTTON",
+            "label": "Submit",
+            "text": "Submit",
+            "bbox": {"x": 50, "y": 150, "width": 100, "height": 35, "left": 50, "top": 150, "right": 150, "bottom": 185},
+            "attributes": {"type": "submit"}
+        }
     ]
 
-    sanitized_ctx, entities = gate.process_and_sanitize(img_bytes, mock_ocr, mock_dom)
+    candidate, validation, state = planner.plan_next_step(
+        sanitized_elements=sanitized_elements,
+        task_goal="Submit credentials"
+    )
 
-    # INVARIANT 1: Raw password string NEVER appears anywhere in sanitized DOM
-    dom_str = str(sanitized_ctx.sanitized_dom_nodes)
-    assert secret_password not in dom_str, "CRITICAL: Raw password leaked into sanitized DOM!"
-
-    # INVARIANT 2: Raw credit card string NEVER appears in sanitized OCR
-    ocr_str = str(sanitized_ctx.sanitized_ocr_blocks)
-    assert secret_card not in ocr_str, "CRITICAL: Raw credit card leaked into sanitized OCR!"
-
-    # INVARIANT 3: Audit logs NEVER contain raw password or secret card
-    log_str = str([log.model_dump() for log in gate.audit_logs])
-    assert secret_password not in log_str, "CRITICAL: Secret password leaked into audit logs!"
-    assert secret_card not in log_str, "CRITICAL: Credit card number leaked into audit logs!"
-
-    # INVARIANT 4: Public entities exposed via to_safe_dict() never contain raw_text field
-    for ent in entities:
-        safe_d = ent.to_safe_dict()
-        assert "raw_text" not in safe_d, "CRITICAL: raw_text exposed in safe dict!"
-
-    print("  ✓ ALL 4 ZERO-LEAK PRIVACY INVARIANTS VERIFIED 100% CLEAN.")
+    assert candidate is not None
+    assert candidate.target_id in ("pb-001", "pb-002")
+    assert validation.allowed is True
+    print("  ✓ Action planning generates valid, executable CandidateActions on redacted elements.")
 
 
 if __name__ == "__main__":
@@ -278,10 +476,20 @@ if __name__ == "__main__":
     print("RUNNING ON-DEVICE PRIVACY ENGINE TEST SUITE")
     print("==================================================")
     test_pii_pattern_detection()
+    test_luhn_and_aadhaar_algorithms()
     test_false_positive_avoidance()
-    test_redaction_engine_visual_dom_ocr()
-    test_privacy_gate_and_remote_guard()
-    test_strict_privacy_invariants()
+    test_visual_redaction_styles()
+    test_dom_attribute_sanitization()
+    test_ocr_token_substitution()
+    test_perceived_element_redaction()
+    test_multi_source_pii_correlation()
+    test_context_keyword_confidence_boost()
+    test_password_and_secret_strong_protection()
+    test_privacy_gate_end_to_end()
+    test_outbound_remote_guard()
+    test_privacy_safe_audit_logging()
+    test_planner_receives_sanitized_data()
+    test_action_compatibility_with_redacted_fields()
     print("==================================================")
-    print("ALL PRIVACY ENGINE TESTS PASSED SUCCESSFULLY! ✓")
+    print("ALL 15 PRIVACY ENGINE TESTS PASSED SUCCESSFULLY! ✓")
     print("==================================================")

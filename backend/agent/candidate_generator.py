@@ -47,14 +47,28 @@ class CandidateGenerator:
         for el in fused_elements:
             el_type = el.get("type", "ELEMENT")
             el_id = el.get("id", "")
-            bbox = el.get("bbox", [0, 0, 0, 0])
+            bbox_raw = el.get("bbox", [0, 0, 0, 0])
+            if isinstance(bbox_raw, list) and len(bbox_raw) >= 4:
+                bbox = [float(bbox_raw[0]), float(bbox_raw[1]), float(bbox_raw[2]), float(bbox_raw[3])]
+            elif isinstance(bbox_raw, dict):
+                x = float(bbox_raw.get("x", bbox_raw.get("left", 0)))
+                y = float(bbox_raw.get("y", bbox_raw.get("top", 0)))
+                w = float(bbox_raw.get("width", 0))
+                h = float(bbox_raw.get("height", 0))
+                if w <= 0 and "right" in bbox_raw:
+                    w = float(bbox_raw["right"]) - x
+                if h <= 0 and "bottom" in bbox_raw:
+                    h = float(bbox_raw["bottom"]) - y
+                bbox = [x, y, x + w, y + h]
+            elif hasattr(bbox_raw, "to_xyxy"):
+                bbox = [float(c) for c in bbox_raw.to_xyxy()]
+            else:
+                bbox = [0.0, 0.0, 0.0, 0.0]
+
             el_text = el.get("text", "")
             el_val = el.get("value", "")
             attrs = el.get("attributes", {})
             conf = float(el.get("confidence", 0.85))
-
-            if len(bbox) < 4:
-                continue
 
             cx = (bbox[0] + bbox[2]) / 2.0
             cy = (bbox[1] + bbox[3]) / 2.0

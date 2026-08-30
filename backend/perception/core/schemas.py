@@ -107,6 +107,9 @@ class PerceivedElement(BaseModel):
     sources: List[str] = Field(default_factory=list)
     attributes: Dict[str, Any] = Field(default_factory=dict)
     visibility: str = "VISIBLE"
+    is_sensitive: bool = False
+    pii_type: Optional[str] = None
+    redacted: bool = False
 
     def to_agent_dict(self) -> dict:
         """Compact representation for the browser agent."""
@@ -122,7 +125,10 @@ class PerceivedElement(BaseModel):
             "interactive": self.interactive,
             "sources": self.sources,
             "attributes": self.attributes,
-            "visibility": self.visibility
+            "visibility": self.visibility,
+            "is_sensitive": self.is_sensitive,
+            "pii_type": self.pii_type,
+            "redacted": self.redacted,
         }
 
     def to_legacy_dict(self) -> dict:
@@ -135,7 +141,10 @@ class PerceivedElement(BaseModel):
             "value": self.attributes.get("value", ""),
             "attributes": self.attributes,
             "confidence": round(self.confidence, 3),
-            "source": "FUSED" if len(self.sources) > 1 else (self.sources[0] if self.sources else "UNKNOWN")
+            "source": "FUSED" if len(self.sources) > 1 else (self.sources[0] if self.sources else "UNKNOWN"),
+            "is_sensitive": self.is_sensitive,
+            "pii_type": self.pii_type,
+            "redacted": self.redacted,
         }
 
 

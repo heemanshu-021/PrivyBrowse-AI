@@ -86,11 +86,31 @@ class PIIDetector:
 
         return f"[{pii_type} REDACTED]"
 
+    def _normalize_bbox(self, bbox_raw: Any) -> List[int]:
+        """Normalizes any bounding box (list, dict, or BoundingBox object) to [x1, y1, x2, y2]."""
+        if not bbox_raw:
+            return [0, 0, 0, 0]
+        if isinstance(bbox_raw, list) and len(bbox_raw) >= 4:
+            return [int(bbox_raw[0]), int(bbox_raw[1]), int(bbox_raw[2]), int(bbox_raw[3])]
+        elif isinstance(bbox_raw, dict):
+            x = int(bbox_raw.get("x", bbox_raw.get("left", 0)))
+            y = int(bbox_raw.get("y", bbox_raw.get("top", 0)))
+            w = int(bbox_raw.get("width", 0))
+            h = int(bbox_raw.get("height", 0))
+            if w <= 0 and "right" in bbox_raw:
+                w = int(bbox_raw["right"]) - x
+            if h <= 0 and "bottom" in bbox_raw:
+                h = int(bbox_raw["bottom"]) - y
+            return [x, y, x + max(0, w), y + max(0, h)]
+        elif hasattr(bbox_raw, "to_xyxy"):
+            return [int(c) for c in bbox_raw.to_xyxy()]
+        return [0, 0, 0, 0]
+
     def detect_all_pii(
         self,
         screenshot_bytes: bytes,
-        text_blocks: List[Dict[str, Any]],
-        dom_nodes: List[Dict[str, Any]]
+        text_blocks: List[Any],
+        dom_nodes: List[Any]
     ) -> List[Dict[str, Any]]:
         """
         Main entry point. Runs multi-signal detection across OCR, DOM, and Vision.
@@ -102,8 +122,8 @@ class PIIDetector:
     def detect_pii(
         self,
         screenshot_bytes: bytes,
-        text_blocks: List[Dict[str, Any]],
-        dom_nodes: List[Dict[str, Any]]
+        text_blocks: List[Any],
+        dom_nodes: List[Any]
     ) -> List[Dict[str, Any]]:
         """Backwards-compatible wrapper."""
         return self.detect_all_pii(screenshot_bytes, text_blocks, dom_nodes)
@@ -111,8 +131,8 @@ class PIIDetector:
     def detect(
         self,
         screenshot_bytes: bytes,
-        text_blocks: List[Dict[str, Any]],
-        dom_nodes: List[Dict[str, Any]]
+        text_blocks: List[Any],
+        dom_nodes: List[Any]
     ) -> List[PIIEntity]:
         """
         Executes full multi-layered PII detection pipeline.
@@ -122,18 +142,42 @@ class PIIDetector:
         entity_counter = 1
 
         # Combine text for global context lookup
-        global_context = " ".join(b.get("text", "") for b in text_blocks)
-        for node in dom_nodes:
-            global_context += f" {node.get('placeholder', '')} {node.get('name', '')} {node.get('id', '')} {node.get('text', '')}"
+        global_context_parts = []
+        for b in text_blocks or []:
+            b_text = b.get("text", "") if isinstance(b, dict) else getattr(b, "text", "")
+            if b_text:
+                global_context_parts.append(str(b_text))
+
+        for node in dom_nodes or []:
+            if isinstance(node, dict):
+                global_context_parts.extend([
+                    str(node.get('placeholder', '')),
+                    str(node.get('name', '')),
+                    str(node.get('id', '')),
+                    str(node.get('text', '')),
+                    str(node.get('value', ''))
+                ])
+            else:
+                global_context_parts.extend([
+                    getattr(node, 'label', ''),
+                    getattr(node, 'text', ''),
+                    str(getattr(node, 'attributes', {}).get('placeholder', '')),
+                    str(getattr(node, 'attributes', {}).get('name', ''))
+                ])
+
+        global_context = " ".join(global_context_parts)
 
         # -------------------------------------------------------------
         # 1. OCR TEXT BLOCKS WITH PATTERN MATCHING & CONTEXT BOOSTING
         # -------------------------------------------------------------
-        for block in text_blocks:
-            text = block.get("text", "").strip()
-            bbox = block.get("bbox", [0, 0, 0, 0])
+        for block in text_blocks or []:
+            text = str(block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "")).strip()
+            raw_bbox = block.get("bbox") if isinstance(block, dict) else getattr(block, "bbox", [0, 0, 0, 0])
+            bbox = self._normalize_bbox(raw_bbox)
             if not text:
                 continue
+
+            elem_id = block.get("element_id") if isinstance(block, dict) else getattr(block, "id", None)
 
             # (A) Email Match
             for match_str, _, _ in matches_email(text):
@@ -255,7 +299,11 @@ class PIIDetector:
                 entity_counter += 1
 
             # (G) OTP with verification context
-            for match_str, _, _ in matches_otp(text, global_context):
+            for match_str, _, _ in matches_otp(text, text):
+                is_fp, _ = is_false_positive_number(match_str, text)
+                if is_fp:
+                    continue
+
                 detected_entities.append(PIIEntity(
                     id=f"pii-{entity_counter:03d}",
                     type=PIIType.OTP.value,
@@ -273,80 +321,107 @@ class PIIDetector:
         # -------------------------------------------------------------
         # 2. DOM SEMANTIC & ATTRIBUTE INSPECTION
         # -------------------------------------------------------------
-        for node in dom_nodes:
-            tag_name = node.get("tag_name", "").upper()
-            input_type = node.get("type", "").lower()
-            placeholder = node.get("placeholder", "").lower()
-            name_attr = node.get("name", "").lower()
-            id_attr = node.get("id", "").lower()
-            node_value = node.get("value", "")
-            node_text = node.get("text", "")
-            bbox = node.get("bbox")
+        for node in dom_nodes or []:
+            if isinstance(node, dict):
+                tag_name = str(node.get("tag_name") or node.get("tag") or node.get("tagName") or "").upper()
+                input_type = str(node.get("inputType") or node.get("type") or "").lower()
+                placeholder = str(node.get("placeholder", "")).lower()
+                name_attr = str(node.get("name", "")).lower()
+                id_attr = str(node.get("id_attr") or node.get("id") or "").lower()
+                aria_attr = str(node.get("aria_label") or node.get("ariaLabel") or "").lower()
+                node_value = str(node.get("value", ""))
+                node_text = str(node.get("text", ""))
+                raw_bbox = node.get("bbox")
+                element_id = str(node.get("id", ""))
+            else:
+                tag_name = str(getattr(node, "type", "")).upper()
+                attrs = getattr(node, "attributes", {}) or {}
+                input_type = str(attrs.get("type", "")).lower()
+                placeholder = str(attrs.get("placeholder", "")).lower()
+                name_attr = str(attrs.get("name", "")).lower()
+                id_attr = str(attrs.get("id_attr", getattr(node, "id", ""))).lower()
+                aria_attr = str(attrs.get("aria_label", "")).lower()
+                node_value = str(attrs.get("value", ""))
+                node_text = str(getattr(node, "text", ""))
+                raw_bbox = getattr(node, "bbox", None)
+                element_id = str(getattr(node, "id", ""))
 
-            if not bbox or len(bbox) < 4:
+            bbox = self._normalize_bbox(raw_bbox)
+            if bbox == [0, 0, 0, 0]:
                 continue
 
-            element_id = node.get("id")
             pii_type = None
             conf = 0.70
             source_signals = ["DOM_SEMANTICS"]
 
+            # Combined context for attribute matching
+            comb_attrs = f"{name_attr} {id_attr} {placeholder} {aria_attr}"
+
+            is_form_control = tag_name in ("INPUT", "TEXTAREA", "SELECT") or input_type != ""
+
+            # Check false positive on value/text
+            val_to_check = node_value or node_text
+            if val_to_check:
+                is_fp, _ = is_false_positive_number(val_to_check, comb_attrs)
+                if is_fp:
+                    continue
+
             # (A) Password input fields (CRITICAL: highest sensitivity)
-            if input_type == "password" or any(k in name_attr or k in id_attr or k in placeholder for k in ["pass", "pwd", "secret"]):
+            if input_type == "password" or (is_form_control and any(k in comb_attrs for k in ["pass", "pwd", "secret"])):
                 pii_type = PIIType.PASSWORD
                 conf = 0.99
                 source_signals.append("DOM_INPUT_PASSWORD")
 
             # (B) OTP / Security code inputs
-            elif any(k in name_attr or k in id_attr or k in placeholder for k in ["otp", "2fa", "verification_code", "passcode"]):
+            elif any(k in comb_attrs for k in ["otp", "2fa", "verification_code", "passcode"]):
                 pii_type = PIIType.OTP
                 conf = 0.96
                 source_signals.append("DOM_OTP_ATTRIBUTE")
 
-            # (C) Credit / Debit Card DOM fields
-            elif any(k in name_attr or k in id_attr or k in placeholder for k in ["card", "cc-number", "cvv", "cvc", "expiry", "cardholder"]):
+            # (C) Credit / Debit Card DOM fields (must be payment context, not UI component card)
+            elif is_form_control and (any(k in comb_attrs for k in ["card_number", "card-number", "cardnumber", "card_num", "card-num", "credit_card", "creditcard", "debit_card", "debitcard", "cc-number", "cc_number", "cc-num", "cc_num", "cvv", "cvc", "expiry", "cardholder", "payment_card", "payment-card"]) or (any(c in comb_attrs for c in ["credit", "debit", "payment", "checkout"]) and "card" in comb_attrs)):
                 pii_type = PIIType.CARD
                 conf = 0.94
                 source_signals.append("DOM_PAYMENT_FIELD")
 
             # (D) Indian PAN Card DOM fields
-            elif any(k in name_attr or k in id_attr or k in placeholder for k in ["pan", "pancard", "tax_id"]):
+            elif any(k in comb_attrs for k in ["pan_number", "pan-number", "pannumber", "pan_card", "pan-card", "pancard", "tax_id"]):
                 pii_type = PIIType.PAN
                 conf = 0.92
                 source_signals.append("DOM_PAN_FIELD")
 
             # (E) Indian Aadhaar DOM fields
-            elif any(k in name_attr or k in id_attr or k in placeholder for k in ["aadhaar", "aadhar", "uidai"]):
+            elif any(k in comb_attrs for k in ["aadhaar", "aadhar", "uidai"]):
                 pii_type = PIIType.AADHAAR
                 conf = 0.92
                 source_signals.append("DOM_AADHAAR_FIELD")
 
             # (F) Email fields
-            elif input_type == "email" or any(k in name_attr or k in id_attr or k in placeholder for k in ["email", "mail", "user_email"]):
+            elif input_type == "email" or (is_form_control and any(k in comb_attrs for k in ["email", "mail", "user_email"])):
                 pii_type = PIIType.EMAIL
                 conf = 0.93
                 source_signals.append("DOM_EMAIL_FIELD")
 
             # (G) Phone fields
-            elif input_type == "tel" or any(k in name_attr or k in id_attr or k in placeholder for k in ["phone", "tel", "mobile"]):
+            elif input_type == "tel" or (is_form_control and any(k in comb_attrs for k in ["phone", "tel", "mobile"])):
                 pii_type = PIIType.PHONE
                 conf = 0.92
                 source_signals.append("DOM_TEL_FIELD")
 
             # (H) Personal Name fields
-            elif any(k in name_attr or k in id_attr or k in placeholder for k in ["fullname", "first_name", "last_name", "user_name", "fname", "lname"]):
+            elif is_form_control and any(k in comb_attrs for k in ["fullname", "first_name", "last_name", "user_name", "fname", "lname"]):
                 pii_type = PIIType.NAME
                 conf = 0.85
                 source_signals.append("DOM_NAME_FIELD")
 
             # (I) Physical Address fields
-            elif any(k in name_attr or k in id_attr or k in placeholder for k in ["address", "street", "city", "zip", "pincode", "postal"]):
+            elif is_form_control and any(k in comb_attrs for k in ["address", "street", "city", "zip", "pincode", "postal"]):
                 pii_type = PIIType.ADDRESS
                 conf = 0.88
                 source_signals.append("DOM_ADDRESS_FIELD")
 
             # (J) Identification Numbers (SSN, Employee ID)
-            elif any(k in name_attr or k in id_attr or k in placeholder for k in ["id_num", "ssn", "gov_id", "national_id"]):
+            elif is_form_control and any(k in comb_attrs for k in ["id_num", "ssn", "gov_id", "national_id"]):
                 pii_type = PIIType.ID_NUM
                 conf = 0.88
                 source_signals.append("DOM_ID_FIELD")

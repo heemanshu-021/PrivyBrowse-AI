@@ -488,28 +488,128 @@ def score_candidates(self, candidates, objective, fused_elements, history) -> Li
 
 ---
 
-## 15. PII Detection Engine
+## 15. Real On-Device PII Detection Engine
 
-* **Supported Categories**:
-  * Indian PAN Card: `[A-Z]{5}[0-9]{4}[A-Z]`
-  * Indian Aadhaar: 12 continuous or 4-4-4 formatted digits
-  * Credit/Debit Cards: 13–16 digits verified via Luhn Algorithm
-  * Passwords: DOM input type `password` and keyword proximity
-  * OTPs: 4–8 digit verification codes near OTP keywords
-  * Email Addresses: RFC-5322 compliant regex
-  * Phone Numbers: Indian (+91) and international formats
-  * Human Faces: Detected via OpenCV Haar Cascade classifier
+* **Source Files**:
+  * Core Detector: [`backend/privacy/pii_detector.py`](file:///Users/heemanshusingh/Desktop/MY%20PROJECT/backend/privacy/pii_detector.py)
+  * Pattern Matchers & Validators: [`backend/privacy/rules/pattern_rules.py`](file:///Users/heemanshusingh/Desktop/MY%20PROJECT/backend/privacy/rules/pattern_rules.py)
+  * Contextual Rules & False-Positive Elimination: [`backend/privacy/rules/context_rules.py`](file:///Users/heemanshusingh/Desktop/MY%20PROJECT/backend/privacy/rules/context_rules.py)
+  * PII Schemas: [`backend/privacy/schemas.py`](file:///Users/heemanshusingh/Desktop/MY%20PROJECT/backend/privacy/schemas.py)
+
+### Multi-Source Detection Architecture
+
+The on-device PII detector fuses three independent detection signals:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                   ON-DEVICE PII DETECTION ENGINE                        │
+│                                                                          │
+│  ┌────────────────────┐   ┌────────────────────┐   ┌──────────────────┐  │
+│  │   DOM ATTRIBUTES   │   │     OCR TEXTS      │   │  OPENCV VISION   │  │
+│  │  (Type, Name, Id,  │   │   (Regex Patterns, │   │  (Haar Cascade   │  │
+│  │   Placeholder,     │   │    Algorithmic     │   │   Frontal Face   │  │
+│  │   Aria, Value)     │   │    Validators)     │   │    Detector)     │  │
+│  └─────────┬──────────┘   └─────────┬──────────┘   └────────┬─────────┘  │
+│            │                        │                       │            │
+│            └────────────────────────┼───────────────────────┘            │
+│                                     ↓                                    │
+│                 ┌──────────────────────────────────────┐                 │
+│                 │   FALSE-POSITIVE ELIMINATION GATE    │                 │
+│                 │   (Years, Prices, Orders, Metrics)   │                 │
+│                 └───────────────────┬──────────────────┘                 │
+│                                     ↓                                    │
+│                 ┌──────────────────────────────────────┐                 │
+│                 │   CONTEXTUAL CONFIDENCE BOOSTING     │                 │
+│                 │    (+0.08 on Semantic Keywords)      │                 │
+│                 └───────────────────┬──────────────────┘                 │
+│                                     ↓                                    │
+│                 ┌──────────────────────────────────────┐                 │
+│                 │   SPATIAL DEDUPLICATION & MERGING    │                 │
+│                 │   (IoU >= 0.40 Box Coalescence)      │                 │
+│                 └───────────────────┬──────────────────┘                 │
+│                                     ↓                                    │
+│                 ┌──────────────────────────────────────┐                 │
+│                 │     STRUCTURED PII ENTITY LIST       │                 │
+│                 │     (Provenance & Masked Text)       │                 │
+│                 └──────────────────────────────────────┘                 │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Supported PII Categories & Detection Rules
+
+| Category | Classification | Detection Method | Validation / Algorithm |
+| :--- | :--- | :--- | :--- |
+| **Indian PAN Card** | `HIGHLY_SENSITIVE` | Regex `\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b` + DOM name/id keywords (`pan_number`, `pancard`, `tax_id`) | Validates 5 uppercase letters, 4 digits, 1 uppercase letter |
+| **Indian Aadhaar** | `HIGHLY_SENSITIVE` | Regex `\b[2-9]\d{3}[\s-]\d{4}[\s-]\d{4}\b` + DOM keywords (`aadhaar`, `uidai`) | `validate_aadhaar_format()`: Rejects leading 0 or 1; rejects all-repeating sequences |
+| **Payment Cards** | `HIGHLY_SENSITIVE` | Regex (13–19 digits, Visa/Mastercard/Amex/RuPay) + DOM payment fields | **Luhn Mod-10 Algorithm** (`validate_luhn()`): Validates cryptographic card checksum |
+| **Passwords & Secrets** | `HIGHLY_SENSITIVE` | DOM `type="password"`, attributes matching `pass`, `pwd`, `secret`, `credentials` | Unconditional masking; never stored or logged in plaintext |
+| **API Keys & Tokens** | `HIGHLY_SENSITIVE` | Prefix matchers: `ghp_`, `sk_live_`, `pk_live_`, `AIza`, `Bearer`, JWT (`eyJ...`) | Strict regex matching + classification as HIGHLY_SENSITIVE |
+| **OTPs & 2FA Codes** | `HIGHLY_SENSITIVE` | Numeric 4–8 digits paired with local verification context keywords (`otp`, `2fa`, `verification code`, `passcode`) | Suppressed unless verification keywords appear in nearby text |
+| **Email Addresses** | `SENSITIVE` | RFC-5322 regex + DOM `type="email"` + keywords | Proximity boosting near contact/login labels |
+| **Phone Numbers** | `SENSITIVE` | Indian mobile `[6-9]\d{9}` + international E.164 formats + DOM `type="tel"` | Pre-filtered against year and dimension false positives |
+| **Human Faces** | `SENSITIVE` | OpenCV `HaarCascadeFrontalFace` (`haarcascade_frontalface_default.xml`) | Visual bounding box detection on screenshot image |
+
+### False-Positive Elimination System
+
+To prevent ordinary non-sensitive webpage content from being mistakenly redacted, the engine applies deterministic negative rules (`is_false_positive_number`):
+1. **Years (1900–2099)**: Matches like `2026` or `1969` near `copyright`, `year`, `since`, `founded` are ignored.
+2. **Prices & Currencies**: Amounts prefixed/suffixed with `₹`, `$`, `€`, `£`, `INR`, `USD` are ignored.
+3. **Order & Product IDs**: Tracking references like `Order #12345` or `PID-84729` are ignored.
+4. **Dimensions & Metrics**: Numbers with units like `1920x1080`, `60fps`, `42ms`, `%`, `px`, `kg`, `MB` are ignored.
+5. **Small Plain Counts**: 1–3 digit integers without CVV/OTP keywords are ignored.
 
 ---
 
-## 16. Privacy Gate & Redaction Layer
+## 16. Local Redaction Engine & Privacy Gate
 
-* **Sanitization Invariant**: Raw unredacted screenshots never leave the local trust boundary.
-* **Redaction Styles**:
-  1. `opaque`: Solid black/colored bounding box rectangles.
-  2. `blur`: Gaussian blur kernel ($k=25$).
-  3. `pixelate`: Sub-sampled pixelation ($10\times 10$).
-* **Text Substitution**: Sensitive strings replaced by deterministic tokens (e.g., `[REDACTED_AADHAAR_01]`).
+* **Source Files**:
+  * Redaction Engine: [`backend/privacy/redactor.py`](file:///Users/heemanshusingh/Desktop/MY%20PROJECT/backend/privacy/redactor.py)
+  * Privacy Gate: [`backend/privacy/privacy_gate.py`](file:///Users/heemanshusingh/Desktop/MY%20PROJECT/backend/privacy/privacy_gate.py)
+
+### Zero-Leak Local Trust Boundary
+
+```
+REAL BROWSER DATA (Chrome Tab)
+         │
+         ▼
+LOCAL ON-DEVICE PERCEPTION (DOM + OCR + OpenCV)
+         │
+         ▼
+LOCAL ON-DEVICE PII DETECTION (Multi-Source + Luhn + False-Positive Filter)
+         │
+         ▼
+LOCAL ON-DEVICE REDACTION & SANITIZATION (Visual Masking + DOM/OCR/Element Scrubbing)
+         │
+         ▼
+SANITIZED SAFE REPRESENTATION (SanitizedContext, Sanitized PerceivedElements)
+         │
+ ════════╪═════════════════════════════════════════════════════════════════
+         │ [ZERO-LEAK PRIVACY GATE ENFORCEMENT BOUNDARY]
+         │ (Outbound transmission of raw unredacted data is STRICTLY BLOCKED)
+         ▼
+PLANNER / REASONING AGENT (Receives clean tokens: [REDACTED_PASSWORD], [REDACTED_EMAIL])
+         │
+         ▼
+ACTION VALIDATOR & SAFETY GATE (Validates bounds, risk, budget, financial confirmation)
+         │
+         ▼
+REAL BROWSER ACTION EXECUTION BRIDGE (Dispatches action safely to Chrome Tab)
+```
+
+### Visual Screenshot Redaction
+
+The redactor applies OpenCV transformations directly onto the image pixel buffer:
+* **`opaque` (Default & Recommended)**: Solid dark fill (`#19191e` for highly sensitive, `#23232d` for sensitive) with a high-contrast accent indicator strip and clear white text label (e.g. `[PASSWORD]`, `[CARD]`).
+* **`blur`**: Region-of-interest Gaussian blur with security border highlight.
+* **`pixelate`**: Nearest-neighbor downsampling and upsampling with security boundary box.
+
+### DOM, OCR, and PerceivedElement Sanitization
+
+1. **DOM Nodes**: Sensitive attributes (`.value`, `.text`, `.placeholder`) on password, payment card, PAN, Aadhaar, email, phone, and OTP fields are scrubbed. Passwords are unconditionally set to `[REDACTED_PASSWORD]` and `••••••••`.
+2. **OCR Layout Blocks**: Text occurrences of sensitive entities are replaced with deterministic tokens (`[REDACTED_<TYPE>]`).
+3. **PerceivedElement Objects**: Enhanced with `is_sensitive=True`, `pii_type="<TYPE>"`, and `redacted=True` metadata flags.
+4. **Agent Working Memory & Action Logs**: Plaintext credentials are never written to audit trails or action execution history.
+5. **Outbound Remote Guard**: `PrivacyGate.guard_outbound_transmission()` strictly rejects unredacted context dictionaries and raises `PrivacyGateViolation`.
 
 ---
 

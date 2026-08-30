@@ -106,13 +106,13 @@ class PiiEntitySchema(BaseModel):
 
 class DetectRequest(BaseModel):
     screenshot: str # Base64 image
-    text_blocks: List[Dict[str, Any]]
-    dom_nodes: List[DOMNodeSchema]
+    text_blocks: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    dom_nodes: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
 
 class RedactRequest(BaseModel):
     screenshot: str # Base64 image
-    pii_entities: List[PiiEntitySchema]
-    dom_nodes: List[DOMNodeSchema]
+    pii_entities: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    dom_nodes: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
     style: Optional[str] = "opaque"
 
 class PlanRequest(BaseModel):
@@ -146,7 +146,7 @@ class FullPerceptionRequest(BaseModel):
 class SanitizeRequest(BaseModel):
     screenshot: str  # Base64 image
     ocr_blocks: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
-    dom_nodes: Optional[List[DOMNodeSchema]] = Field(default_factory=list)
+    dom_nodes: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
     style: Optional[str] = "opaque"
 
 class PolicyUpdateRequest(BaseModel):
@@ -370,8 +370,8 @@ def detect_privacy(req: DetectRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid screenshot encoding.")
 
-    nodes_dict = [n.model_dump(by_alias=True) for n in req.dom_nodes]
-    pii_entities = pii_detector.detect_all_pii(screenshot_bytes, req.text_blocks, nodes_dict)
+    nodes_dict = [n.model_dump(by_alias=True) if hasattr(n, "model_dump") else n for n in (req.dom_nodes or [])]
+    pii_entities = pii_detector.detect_all_pii(screenshot_bytes, req.text_blocks or [], nodes_dict)
 
     t_pii_ms = (time.perf_counter() - t_start) * 1000.0
     metrics_store["last_pii_latency"] = t_pii_ms / 1000.0
@@ -393,8 +393,8 @@ def redact_privacy(req: RedactRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid screenshot encoding.")
 
-    pii_dict = [p.model_dump() for p in req.pii_entities]
-    nodes_dict = [n.model_dump(by_alias=True) for n in req.dom_nodes]
+    pii_dict = [p.model_dump() if hasattr(p, "model_dump") else p for p in (req.pii_entities or [])]
+    nodes_dict = [n.model_dump(by_alias=True) if hasattr(n, "model_dump") else n for n in (req.dom_nodes or [])]
 
     redacted_bytes, redaction_map = redactor.redact_screenshot(
         screenshot_bytes, pii_dict, redaction_style=req.style or "opaque"
@@ -405,7 +405,7 @@ def redact_privacy(req: RedactRequest):
     t_redact_ms = (time.perf_counter() - t_start) * 1000.0
 
     metrics_store["last_redaction_latency"] = t_redact_ms / 1000.0
-    metrics_store["total_pii_redacted"] += len(req.pii_entities)
+    metrics_store["total_pii_redacted"] += len(req.pii_entities or [])
 
     return {
         "redacted_screenshot": redacted_b64,
@@ -427,7 +427,7 @@ def sanitize_privacy_gate(req: SanitizeRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid screenshot encoding.")
 
-    nodes_dict = [n.model_dump(by_alias=True) for n in req.dom_nodes] if req.dom_nodes else []
+    nodes_dict = [n.model_dump(by_alias=True) if hasattr(n, "model_dump") else n for n in (req.dom_nodes or [])]
 
     sanitized_context, pii_entities = privacy_gate.process_and_sanitize(
         screenshot_bytes=screenshot_bytes,
@@ -452,6 +452,36 @@ def sanitize_privacy_gate(req: SanitizeRequest):
             "redaction_ms": privacy_gate.metrics["last_redaction_latency_ms"],
             "total_ms": round(t_total_ms, 2)
         }
+    }
+
+@app.post("/api/privacy/from-context")
+def sanitize_from_stored_context():
+    """Runs on-device PII detection and redaction directly on the stored browser context."""
+    if not latest_browser_context.get("connected") or not latest_browser_context.get("raw_context"):
+        raise HTTPException(status_code=400, detail="No active browser context ingested yet. Ensure the Chrome extension is active.")
+    
+    ctx = latest_browser_context["raw_context"]
+    screenshot_b64 = ctx.get("screenshot", {}).get("dataUrl", "")
+    elements = ctx.get("elements", [])
+    
+    try:
+        header, encoded = screenshot_b64.split(",", 1) if "," in screenshot_b64 else ("", screenshot_b64)
+        screenshot_bytes = base64.b64decode(encoded) if encoded else b""
+    except Exception:
+        screenshot_bytes = b""
+
+    sanitized_context, pii_entities = privacy_gate.process_and_sanitize(
+        screenshot_bytes=screenshot_bytes,
+        ocr_blocks=[],
+        dom_nodes=elements,
+        style="opaque"
+    )
+
+    return {
+        "success": True,
+        "sanitized_context": sanitized_context.model_dump(),
+        "pii_entities": [e.to_safe_dict() for e in pii_entities],
+        "redaction_map": sanitized_context.redaction_map.model_dump()
     }
 
 @app.get("/api/privacy/policy")

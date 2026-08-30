@@ -249,3 +249,98 @@ class Redactor:
             sanitized_nodes.append(new_node)
 
         return sanitized_nodes
+
+    def redact_perceived_elements(
+        self,
+        elements: List[Any],
+        pii_entities: List[Any]
+    ) -> List[Any]:
+        """
+        Sanitizes a list of PerceivedElement objects so sensitive labels and values
+        are scrubbed while structural attributes needed for browser actions are preserved.
+        """
+        sanitized_elements = []
+
+        # Convert pii entities to dict form if needed
+        pii_list = [p.model_dump() if hasattr(p, "model_dump") else p for p in pii_entities]
+
+        for el in elements:
+            # Copy element
+            new_el = el.model_copy(deep=True) if hasattr(el, "model_copy") else dict(el)
+            el_id = getattr(new_el, "id", None) or (new_el.get("id") if isinstance(new_el, dict) else "")
+            el_text = getattr(new_el, "text", "") or (new_el.get("text", "") if isinstance(new_el, dict) else "")
+            el_label = getattr(new_el, "label", "") or (new_el.get("label", "") if isinstance(new_el, dict) else "")
+            attrs = getattr(new_el, "attributes", {}) or (new_el.get("attributes", {}) if isinstance(new_el, dict) else {})
+            input_type = attrs.get("type", "").lower() if isinstance(attrs, dict) else ""
+
+            is_sensitive = False
+            matched_pii_type = None
+
+            # Password unconditional protection
+            if input_type == "password" or any(k in str(el_id).lower() or k in str(el_label).lower() for k in ["pass", "pwd", "secret"]):
+                is_sensitive = True
+                matched_pii_type = "PASSWORD"
+                token = "[REDACTED_PASSWORD]"
+                if hasattr(new_el, "text"):
+                    new_el.text = token
+                    new_el.label = "[PASSWORD FIELD]"
+                    new_el.is_sensitive = True
+                    new_el.pii_type = "PASSWORD"
+                    new_el.redacted = True
+                    if hasattr(new_el, "attributes") and isinstance(new_el.attributes, dict):
+                        new_el.attributes["value"] = token
+                        new_el.attributes["placeholder"] = "••••••••"
+                elif isinstance(new_el, dict):
+                    new_el["text"] = token
+                    new_el["label"] = "[PASSWORD FIELD]"
+                    new_el["is_sensitive"] = True
+                    new_el["pii_type"] = "PASSWORD"
+                    new_el["redacted"] = True
+                    if "attributes" in new_el and isinstance(new_el["attributes"], dict):
+                        new_el["attributes"]["value"] = token
+                        new_el["attributes"]["placeholder"] = "••••••••"
+
+                sanitized_elements.append(new_el)
+                continue
+
+            # Check PII entity matches
+            for pii in pii_list:
+                pii_raw = pii.get("raw_text", "")
+                pii_type = pii.get("type", "SENSITIVE")
+                pii_elem_id = pii.get("element_id")
+                token = f"[REDACTED_{pii_type}]"
+
+                if pii_elem_id and pii_elem_id == el_id:
+                    is_sensitive = True
+                    matched_pii_type = pii_type
+                    break
+                elif pii_raw and (pii_raw in el_text or pii_raw in el_label):
+                    is_sensitive = True
+                    matched_pii_type = pii_type
+                    break
+
+            if is_sensitive and matched_pii_type:
+                token = f"[REDACTED_{matched_pii_type}]"
+                if hasattr(new_el, "text"):
+                    new_el.text = token
+                    new_el.label = token
+                    new_el.is_sensitive = True
+                    new_el.pii_type = matched_pii_type
+                    new_el.redacted = True
+                    if hasattr(new_el, "attributes") and isinstance(new_el.attributes, dict):
+                        new_el.attributes["value"] = token
+                        new_el.attributes["placeholder"] = f"Enter {matched_pii_type.lower()}..."
+                elif isinstance(new_el, dict):
+                    new_el["text"] = token
+                    new_el["label"] = token
+                    new_el["is_sensitive"] = True
+                    new_el["pii_type"] = matched_pii_type
+                    new_el["redacted"] = True
+                    if "attributes" in new_el and isinstance(new_el["attributes"], dict):
+                        new_el["attributes"]["value"] = token
+                        new_el["attributes"]["placeholder"] = f"Enter {matched_pii_type.lower()}..."
+
+            sanitized_elements.append(new_el)
+
+        return sanitized_elements
+
