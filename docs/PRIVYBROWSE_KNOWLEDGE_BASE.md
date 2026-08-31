@@ -1875,5 +1875,48 @@ PrivyBrowse AI is engineered for lightweight, on-device execution with predictab
 * **Bounded Audit & Checkpoint Stacks**: `AgentMemory` caps checkpoints at 50 items and action records at 50 items; `ObservabilityEventBus` caps in-memory events at 500 items.
 
 ---
+
+## 30. Production QA & Validation
+
+PrivyBrowse AI maintains a rigorous 4-level test pyramid and empirical validation strategy to ensure genuine production correctness, safety, and reliability.
+
+```
+                       ▲
+                      / \
+                     /   \
+                    / E2E \       Level 4: 15 Core Scenarios (tests/test_e2e_production_validation.py)
+                   /───────\
+                  / Browser \     Level 3: 8 Suites (Real browser tab & extension sync)
+                 /───────────\
+                /  Component  \   Level 2: 10 Suites (Security, Privacy, Recovery, Context)
+               /───────────────\
+              /   Unit Tests    \ Level 1: 7 Suites (Perception, Geometry, Decomposer, Validator)
+             /───────────────────\
+```
+
+### 1. Test Reality & Environment Limitations
+* **Strict Realism Rule**: Unit tests use deterministic test fixtures with zero simulated fake successes. Mocking is explicitly restricted to external network boundaries and isolated unit boundaries.
+* **OCR Classification**: Native Tesseract binary presence is automatically probed. When Tesseract binary is not installed in the local OS, the verified `DOM_TEXT_PROXY` mode executes, and the report explicitly classifies this as `ENVIRONMENT LIMITATION (FALLBACK VERIFIED)`.
+* **Zero False-Passing Guarantee**: Tests never fabricate pass statuses. Every assertion validates real object mutations, status signals, or security rejections.
+
+### 2. End-to-End Acceptance Scenarios (E2E-01 to E2E-15)
+1. **E2E-01 (Search Task)**: Natural language search decomposition, input typing, and results verification.
+2. **E2E-02 (Multi-Step Navigation)**: Traverses multi-page workflows maintaining tab identity.
+3. **E2E-03 (Form Filling)**: Populates multi-field forms safely using synthetic test values.
+4. **E2E-04 (Dynamic DOM Mutation)**: Real-time context manager ingestion on modal/overlay appearance.
+5. **E2E-05 (Target Below Viewport)**: Autonomous scrolling to reveal and click offscreen targets ($y > 1080\text{px}$).
+6. **E2E-06 (Stale Target Recovery)**: Re-perception and candidate re-binding on unmounted elements.
+7. **E2E-07 (Verification Failure & Retry)**: Catches unverified postconditions and initiates bounded retries.
+8. **E2E-08 (Prompt Injection Defense)**: Neutralizes adversarial system instruction overrides.
+9. **E2E-09 (PII-Protected Form)**: Local redaction of Aadhaar, PAN, payment cards, and passwords.
+10. **E2E-10 (High-Risk Confirmation Gate)**: Enforces human confirmation before executing financial transactions.
+11. **E2E-11 (Extension Reconnect)**: Recovers connection state across background service worker restarts.
+12. **E2E-12 (Task Cancellation)**: Immediate halt and clean state teardown upon user request.
+13. **E2E-13 (Loop & Stagnation Detection)**: Halts with `SAFE_STOP` after 4 consecutive non-progressing turns.
+14. **E2E-14 (Navigation Security & SSRF)**: Blocks AWS metadata (`169.254.169.254`), dangerous schemes, and binaries.
+15. **E2E-15 (Task Completion Immutability)**: Guarantees `COMPLETED` tasks reject subsequent action dispatches.
+
+---
 *End of PrivyBrowse AI Knowledge Base Document.*
+
 

@@ -367,8 +367,25 @@ class PIIDetector:
                 if is_fp:
                     continue
 
+            # (A0) Direct Regex Pattern Match on DOM Node Value
+            if node_value:
+                if matches_pan(node_value):
+                    pii_type = PIIType.PAN
+                    conf = 0.95
+                    source_signals.append("DOM_VALUE_REGEX_PAN")
+                elif matches_card(node_value):
+                    pii_type = PIIType.CARD
+                    conf = 0.95
+                    source_signals.append("DOM_VALUE_REGEX_CARD")
+                elif matches_aadhaar(node_value):
+                    pii_type = PIIType.AADHAAR
+                    conf = 0.95
+                    source_signals.append("DOM_VALUE_REGEX_AADHAAR")
+
             # (A) Password input fields (CRITICAL: highest sensitivity)
-            if input_type == "password" or (is_form_control and any(k in comb_attrs for k in ["pass", "pwd", "secret"])):
+            if pii_type is not None:
+                pass
+            elif input_type == "password" or (is_form_control and any(k in comb_attrs for k in ["pass", "pwd", "secret"])):
                 pii_type = PIIType.PASSWORD
                 conf = 0.99
                 source_signals.append("DOM_INPUT_PASSWORD")
