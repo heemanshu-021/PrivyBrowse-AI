@@ -419,7 +419,14 @@ class AgentPlanner:
     def stop(self) -> AgentState:
         if self.current_task:
             self.current_task.status = AgentState.CANCELLED
+        self.current_task = None
         self.state_machine.reset()
+        return self.state_machine.current_state
+
+    def reset(self) -> AgentState:
+        self.current_task = None
+        self.state_machine.reset()
+        self.memory.clear()
         return self.state_machine.current_state
 
     def get_agent_status(self) -> Dict[str, Any]:

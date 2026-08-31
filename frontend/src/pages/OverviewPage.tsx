@@ -159,7 +159,7 @@ export const OverviewPage: React.FC = () => {
             <div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Current Objective</div>
               <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                "{activeTask ? activeTask.goal : taskText}"
+                "{activeTask ? activeTask.goal : (taskText || 'No active objective (Awaiting task input)')}"
               </div>
             </div>
             <div style={{ width: '200px' }}>

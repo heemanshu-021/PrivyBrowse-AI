@@ -611,13 +611,13 @@ def verify_agent_action(req: AgentVerifyRequest):
 
 @app.post("/api/agent/control")
 def control_agent(req: AgentControlRequest):
-    """Controls agent state: start, pause, resume, stop."""
+    """Controls agent state: start, pause, resume, stop, reset."""
     cmd = req.command.lower()
     if cmd == "pause":
         new_state = agent_planner.pause()
     elif cmd == "resume":
         new_state = agent_planner.resume()
-    elif cmd == "stop":
+    elif cmd in ("stop", "reset"):
         new_state = agent_planner.stop()
     else:
         new_state = agent_planner.state_machine.current_state

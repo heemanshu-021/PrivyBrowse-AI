@@ -216,8 +216,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [eventStreamConnected, setEventStreamConnected] = useState<boolean>(false);
   const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
 
-  const [currentScenario, setCurrentScenario] = useState<DemoScenario>(DEMO_SCENARIOS[2]); // Default to checkout
-  const [taskText, setTaskText] = useState<string>(DEMO_SCENARIOS[2].task);
+  const [currentScenario, setCurrentScenario] = useState<DemoScenario>(DEMO_SCENARIOS[1]); // Default to search scenario
+  const [taskText, setTaskText] = useState<string>('');
 
   const [rawScreenshot, setRawScreenshot] = useState<string>('');
   const [, setRedactedScreenshot] = useState<string>('');
@@ -280,9 +280,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setDashboardSnapshot(data);
         if (data.active_task) {
           setActiveTask(data.active_task);
+        } else {
+          setActiveTask(null);
         }
         if (data.browser_context) {
           setBrowserContext(data.browser_context);
+        } else {
+          setBrowserContext(null);
         }
         if (data.health) {
           setSystemHealth(data.health);
@@ -766,17 +770,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const stopAgent = () => {
     setAgentStatus('READY');
     setPlannedAction(null);
+    setActiveTask(null);
     setTimelineSteps(INITIAL_TIMELINE);
+    fetch(`${BACKEND_URL}/agent/control`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: 'stop' })
+    }).catch(() => {});
     addLog('sys', 'Agent stopped and reset.');
   };
 
   const resetState = () => {
     setPlannedAction(null);
+    setActiveTask(null);
     setSelectedElementId(null);
     setSelectedPiiId(null);
     setPiiEntities([]);
     setFusedElements([]);
     setTimelineSteps(INITIAL_TIMELINE);
+    fetch(`${BACKEND_URL}/agent/control`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: 'reset' })
+    }).catch(() => {});
     addLog('sys', 'Workspace state cleared.');
   };
 
