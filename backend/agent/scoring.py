@@ -73,6 +73,11 @@ class ActionScorer:
             if candidate.risk_level == RiskLevel.CRITICAL and candidate.requires_confirmation:
                 risk_penalty = 0.10
 
+            # 7. Disabled / Readonly Inactivity Penalty
+            disabled_penalty = 0.0
+            if el and (el.get("enabled") is False or el.get("attributes", {}).get("disabled") is True):
+                disabled_penalty = 0.50
+
             # Composite Score calculation
             composite_score = (
                 self.w_semantic * s_semantic +
@@ -80,7 +85,8 @@ class ActionScorer:
                 self.w_type_match * s_type +
                 self.w_visibility * s_vis -
                 history_penalty -
-                risk_penalty
+                risk_penalty -
+                disabled_penalty
             )
             composite_score = max(0.0, min(1.0, composite_score))
 
@@ -92,6 +98,7 @@ class ActionScorer:
                 "visibility_factor": round(s_vis, 2),
                 "history_penalty": round(history_penalty, 2),
                 "risk_penalty": round(risk_penalty, 2),
+                "disabled_penalty": round(disabled_penalty, 2),
                 "composite_score": round(composite_score, 3)
             }
 
@@ -106,30 +113,51 @@ class ActionScorer:
         objective: Objective,
         element: Dict[str, Any] = None
     ) -> float:
-        """Evaluates keyword overlap between candidate and objective."""
+        """Evaluates keyword overlap, accessibility name, and semantic relevance between candidate and objective."""
         if not element:
             return 0.50
 
-        el_text = (element.get("text", "") or "").lower()
+        # Penalize disabled elements
+        if element.get("enabled") is False or element.get("attributes", {}).get("disabled") is True:
+            return 0.05
+
+        el_label = str(element.get("label", "") or "").lower()
+        el_text = str(element.get("text", "") or "").lower()
         attrs = element.get("attributes", {})
-        el_placeholder = (element.get("placeholder", "") or attrs.get("placeholder", "") or "").lower()
-        el_id = (element.get("id", "") or "").lower()
-        el_name = (element.get("name", "") or attrs.get("name", "") or "").lower()
+        el_placeholder = str(element.get("placeholder", "") or attrs.get("placeholder", "") or "").lower()
+        el_aria = str(attrs.get("aria_label", "") or attrs.get("aria_labelledby", "") or "").lower()
+        el_form_label = str(attrs.get("form_label", "") or "").lower()
+        el_id = str(element.get("id", "") or "").lower()
+        el_name = str(element.get("name", "") or attrs.get("name", "") or "").lower()
 
-        combined = f"{el_text} {el_placeholder} {el_id} {el_name}"
+        combined = f"{el_label} {el_text} {el_aria} {el_form_label} {el_placeholder} {el_id} {el_name}"
 
-        # Match against target keywords
-        matches = sum(1 for kw in objective.target_keywords if kw.lower() in combined)
-        if matches >= 2:
-            return 0.98
-        elif matches == 1:
-            return 0.85
+        # 1. Exact phrase match with objective description or target
+        desc_clean = objective.description.lower().replace("click", "").replace("type", "").strip()
+        if desc_clean and len(desc_clean) > 3 and (desc_clean in combined or any(desc_clean in s for s in (el_label, el_text, el_aria, el_form_label))):
+            return 1.0
 
-        # Generic semantic intent check
+        # 2. Target keywords overlap
+        target_kws = [kw.lower() for kw in objective.target_keywords if kw]
+        if target_kws:
+            matches = sum(1 for kw in target_kws if kw in combined)
+            ratio = matches / len(target_kws)
+            if ratio == 1.0:
+                return 0.98
+            elif ratio >= 0.5:
+                return 0.88
+            elif matches >= 1:
+                return 0.75
+
+        # 3. Generic semantic intent match
         el_type = str(element.get("type") or element.get("tag") or element.get("tag_name") or "").upper()
         if objective.semantic_intent in ("search_input", "search_query") and el_type in ("INPUT", "TEXTAREA"):
-            return 0.80
-        if objective.semantic_intent in ("submit_search", "submit_login", "submit_payment") and el_type in ("BUTTON", "SUBMIT"):
-            return 0.80
+            return 0.82
+        if objective.semantic_intent in ("submit_search", "submit_login", "submit_payment", "submit_form") and el_type in ("BUTTON", "SUBMIT"):
+            return 0.82
+        if objective.semantic_intent in ("select_option", "dropdown") and el_type in ("SELECT", "OPTION"):
+            return 0.88
+        if objective.semantic_intent in ("toggle_checkbox", "check", "uncheck") and el_type in ("CHECKBOX", "RADIO"):
+            return 0.88
 
         return 0.40

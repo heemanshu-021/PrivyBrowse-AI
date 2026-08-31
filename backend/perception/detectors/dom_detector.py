@@ -14,32 +14,54 @@ TAG_TYPE_MAP = {
     "INPUT": "INPUT",
     "TEXTAREA": "TEXTAREA",
     "SELECT": "SELECT",
+    "OPTION": "OPTION",
     "IMG": "IMAGE",
-    "H1": "HEADING", "H2": "HEADING", "H3": "HEADING",
-    "H4": "HEADING", "H5": "HEADING", "H6": "HEADING",
-    "NAV": "NAV",
+    "DIALOG": "DIALOG",
     "FORM": "FORM",
+    "NAV": "NAV",
     "LABEL": "TEXT",
     "P": "TEXT",
     "SPAN": "TEXT",
-    "B": "TEXT",
-    "STRONG": "TEXT",
-    "I": "TEXT",
-    "EM": "TEXT",
-    "DIV": "ELEMENT",
-    "HEADER": "ELEMENT",
-    "SECTION": "ELEMENT",
+    "H1": "HEADING", "H2": "HEADING", "H3": "HEADING",
+    "H4": "HEADING", "H5": "HEADING", "H6": "HEADING",
+    "B": "TEXT", "STRONG": "TEXT", "I": "TEXT", "EM": "TEXT",
+    "DIV": "ELEMENT", "HEADER": "ELEMENT", "SECTION": "ELEMENT",
+    "ARTICLE": "ELEMENT", "MAIN": "ELEMENT", "ASIDE": "ELEMENT"
+}
+
+ROLE_TYPE_MAP = {
+    "BUTTON": "BUTTON",
+    "LINK": "LINK",
+    "TEXTBOX": "INPUT",
+    "SEARCHBOX": "INPUT",
+    "CHECKBOX": "CHECKBOX",
+    "RADIO": "RADIO",
+    "SWITCH": "CHECKBOX",
+    "COMBOBOX": "SELECT",
+    "LISTBOX": "SELECT",
+    "OPTION": "OPTION",
+    "TAB": "TAB",
+    "TABPANEL": "ELEMENT",
+    "MENU": "MENU",
+    "MENUITEM": "BUTTON",
+    "DIALOG": "DIALOG",
+    "ALERTDIALOG": "DIALOG",
+    "ALERT": "ALERT",
+    "BANNER": "BANNER",
 }
 
 INPUT_TYPE_OVERRIDES = {
     "submit": "BUTTON",
     "button": "BUTTON",
+    "reset": "BUTTON",
     "checkbox": "CHECKBOX",
     "radio": "RADIO",
     "image": "IMAGE",
+    "select-one": "SELECT",
+    "select-multiple": "SELECT",
 }
 
-INTERACTIVE_TYPES = {"BUTTON", "LINK", "INPUT", "TEXTAREA", "CHECKBOX", "RADIO", "SELECT"}
+INTERACTIVE_TYPES = {"BUTTON", "LINK", "INPUT", "TEXTAREA", "CHECKBOX", "RADIO", "SELECT", "OPTION", "TAB", "MENU", "DIALOG"}
 
 
 class DOMDetector:
@@ -96,28 +118,49 @@ class DOMDetector:
             raw_type = node.get("inputType") or node.get("type") or ""
             input_type = str(raw_type).lower()
 
-            # Determine element type
-            el_type = node.get("type", "").upper() if node.get("type") and node.get("type").upper() in TAG_TYPE_MAP.values() else TAG_TYPE_MAP.get(tag_name, "ELEMENT")
-            if tag_name == "INPUT" and input_type in INPUT_TYPE_OVERRIDES:
-                el_type = INPUT_TYPE_OVERRIDES[input_type]
-            elif node.get("role"):
-                role_upper = str(node.get("role")).upper()
-                if role_upper in TAG_TYPE_MAP:
-                    el_type = TAG_TYPE_MAP[role_upper]
+            # Role resolution
+            raw_role = str(node.get("role", "")).upper()
 
-            # Resolve label
+            # Determine element type
+            if node.get("type") and str(node.get("type")).upper() in INTERACTIVE_TYPES:
+                el_type = str(node.get("type")).upper()
+            elif raw_role in ROLE_TYPE_MAP:
+                el_type = ROLE_TYPE_MAP[raw_role]
+            elif tag_name == "INPUT" and input_type in INPUT_TYPE_OVERRIDES:
+                el_type = INPUT_TYPE_OVERRIDES[input_type]
+            else:
+                el_type = TAG_TYPE_MAP.get(tag_name, "ELEMENT")
+
+            # Check for modal / cookie banner classification from classes or IDs
+            class_str = str(node.get("class_attr") or node.get("className") or node.get("class") or "").lower()
+            id_str = str(node.get("id_attr") or node.get("id") or "").lower()
+            if "cookie" in class_str or "cookie" in id_str or "consent" in class_str:
+                el_type = "COOKIE_BANNER" if el_type in ("ELEMENT", "DIALOG") else el_type
+            elif "modal" in class_str or "dialog" in class_str or node.get("aria-modal") is True:
+                el_type = "DIALOG" if el_type == "ELEMENT" else el_type
+
+            # Resolve label & accessibility names
             text = str(node.get("text", "")).strip()
             value = str(node.get("value", "")).strip()
             placeholder = str(node.get("placeholder", "")).strip()
             aria_label = str(node.get("aria_label") or node.get("ariaLabel") or node.get("aria-label") or "").strip()
-            label = text or aria_label or placeholder or value
+            aria_labelledby = str(node.get("aria_labelledby") or node.get("ariaLabelledBy") or node.get("aria-labelledby") or "").strip()
+            form_label = str(node.get("form_label") or node.get("formLabel") or "").strip()
+            label = aria_label or form_label or aria_labelledby or text or placeholder or value
+
+            # State properties
+            checked = bool(node.get("checked", False)) or str(node.get("aria-checked", "")).lower() == "true"
+            selected = bool(node.get("selected", False))
+            disabled = bool(node.get("disabled", False)) or str(node.get("aria-disabled", "")).lower() == "true"
+            readonly = bool(node.get("readonly", False))
+            in_shadow = bool(node.get("in_shadow_dom", False) or node.get("inShadowDom", False))
 
             # Determine interactivity
-            interactive = el_type in INTERACTIVE_TYPES
+            interactive = el_type in INTERACTIVE_TYPES and not disabled
 
             # Visibility & enabled state
             visible = bool(node.get("visible", True))
-            enabled = bool(node.get("enabled", True))
+            enabled = not disabled
             visibility_str = str(node.get("visibility", "VISIBLE")).upper()
 
             elements.append(PerceivedElement(
@@ -126,7 +169,7 @@ class DOMDetector:
                 label=label,
                 text=text,
                 bbox=bbox,
-                confidence=0.92,  # DOM elements have high structural confidence
+                confidence=0.94 if in_shadow else 0.92,
                 visible=visible,
                 enabled=enabled,
                 interactive=interactive,
@@ -135,12 +178,22 @@ class DOMDetector:
                     "tag_name": tag_name,
                     "type": input_type,
                     "placeholder": placeholder,
-                    "id_attr": str(node.get("id_attr") or node.get("id") or ""),
-                    "class_attr": str(node.get("class_attr") or node.get("className") or node.get("class") or ""),
+                    "id_attr": id_str,
+                    "class_attr": class_str,
                     "name": str(node.get("name", "")),
                     "value": value,
                     "selector": str(node.get("selector", "")),
-                    "role": str(node.get("role", "")),
+                    "role": raw_role,
+                    "aria_label": aria_label,
+                    "aria_labelledby": aria_labelledby,
+                    "form_label": form_label,
+                    "checked": checked,
+                    "selected": selected,
+                    "disabled": disabled,
+                    "readonly": readonly,
+                    "in_shadow_dom": in_shadow,
+                    "options": node.get("options", []),
+                    "href": str(node.get("href", "")),
                 },
                 visibility=visibility_str if visibility_str in {"VISIBLE", "HIDDEN", "PARTIALLY_VISIBLE", "OFFSCREEN", "OBSCURED"} else "VISIBLE",
             ))

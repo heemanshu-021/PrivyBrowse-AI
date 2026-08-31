@@ -86,10 +86,55 @@ function classifyElementType(el) {
   return 'element';
 }
 
+function findFormLabel(el) {
+  if (!el) return '';
+  // 1. Check for explicit <label for="el.id">
+  if (el.id) {
+    const labelEl = document.querySelector(`label[for="${el.id}"]`);
+    if (labelEl) {
+      return (labelEl.innerText || labelEl.textContent || '').trim();
+    }
+  }
+  // 2. Check for enclosing <label> parent
+  const parentLabel = el.closest('label');
+  if (parentLabel) {
+    const clone = parentLabel.cloneNode(true);
+    // Remove the input itself from text extraction
+    clone.querySelectorAll('input, select, textarea').forEach(n => n.remove());
+    return (clone.innerText || clone.textContent || '').trim();
+  }
+  // 3. Check for aria-labelledby
+  const labelledBy = el.getAttribute('aria-labelledby');
+  if (labelledBy) {
+    const targetEl = document.getElementById(labelledBy);
+    if (targetEl) {
+      return (targetEl.innerText || targetEl.textContent || '').trim();
+    }
+  }
+  return '';
+}
+
 function extractNormalizedDOM() {
   const candidatesSelector =
-    'button, input, select, textarea, a, [role="button"], [role="link"], [role="checkbox"], [role="radio"], label, form, img, h1, h2, h3, h4, p, span';
+    'button, input, select, textarea, a, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="tab"], [role="option"], [role="combobox"], [role="dialog"], dialog, label, form, img, h1, h2, h3, h4, p, span';
+
   const rawElements = Array.from(document.querySelectorAll(candidatesSelector));
+
+  // Traverse open Shadow DOM trees
+  try {
+    document.querySelectorAll('*').forEach(host => {
+      if (host.shadowRoot) {
+        try {
+          const shadowItems = host.shadowRoot.querySelectorAll(candidatesSelector);
+          shadowItems.forEach(el => {
+            el.__inShadowDom = true;
+            rawElements.push(el);
+          });
+        } catch (e) {}
+      }
+    });
+  } catch (e) {}
+
   const elements = [];
   let counter = 1;
 
@@ -101,7 +146,7 @@ function extractNormalizedDOM() {
     const sensitive = isSensitiveField(el);
 
     let text = '';
-    if (['h1', 'h2', 'h3', 'h4', 'p', 'span', 'a', 'button', 'label'].includes(tagName)) {
+    if (['h1', 'h2', 'h3', 'h4', 'p', 'span', 'a', 'button', 'label', 'option'].includes(tagName)) {
       text = (el.innerText || el.textContent || '').trim();
     }
     if (!text && ['h1', 'h2', 'h3', 'h4', 'p', 'span'].includes(tagName)) {
@@ -112,15 +157,39 @@ function extractNormalizedDOM() {
     counter++;
     el.dataset.pbId = id;
 
+    const formLabel = findFormLabel(el);
+    const ariaLabel = el.getAttribute('aria-label') || null;
+    const isChecked = el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio') ? el.checked : (el.getAttribute('aria-checked') === 'true');
+    const isSelected = el.tagName === 'OPTION' ? el.selected : (el.getAttribute('aria-selected') === 'true');
+    const isModal = el.tagName === 'DIALOG' || el.getAttribute('role') === 'dialog' || el.getAttribute('aria-modal') === 'true' || el.classList.contains('modal');
+
+    // Extract dropdown options if select element
+    let optionsList = [];
+    if (el instanceof HTMLSelectElement) {
+      optionsList = Array.from(el.options).map((opt, idx) => ({
+        index: idx,
+        value: opt.value,
+        text: (opt.text || opt.innerText || '').trim(),
+        selected: opt.selected
+      }));
+    }
+
     elements.push({
       id,
-      type,
+      type: isModal ? 'dialog' : type,
       tag: tagName,
       text: sensitive ? '[SENSITIVE FIELD]' : text.substring(0, 160),
-      ariaLabel: el.getAttribute('aria-label') || null,
+      ariaLabel: ariaLabel || null,
+      aria_labelledby: el.getAttribute('aria-labelledby') || null,
+      form_label: formLabel || null,
       placeholder: el.getAttribute('placeholder') || null,
       role: el.getAttribute('role') || null,
       name: el.getAttribute('name') || null,
+      value: sensitive ? '[REDACTED]' : (el.value || ''),
+      checked: isChecked,
+      selected: isSelected,
+      options: optionsList,
+      in_shadow_dom: Boolean(el.__inShadowDom),
       inputType: el instanceof HTMLInputElement ? el.type : null,
       sensitive: sensitive || undefined,
       bbox: {
@@ -134,7 +203,7 @@ function extractNormalizedDOM() {
         bottom: Math.round(rect.bottom)
       },
       visible: true,
-      enabled: !el.disabled,
+      enabled: !el.disabled && el.getAttribute('aria-disabled') !== 'true',
       selector: el.id ? `#${el.id}` : undefined
     });
   });
@@ -331,17 +400,80 @@ async function executeSafeAction(request) {
     return makeResult({ success: true, action: 'NAVIGATE', detail: `Navigating to ${text}`, timestamp });
   }
 
+  if (action === 'SCROLL_INTO_VIEW' || action === 'SCROLL_TO_TARGET') {
+    const targetElement = resolveElement(target || {});
+    if (!targetElement) {
+      return makeResult({ success: false, action, error: 'TARGET_NOT_FOUND', detail: 'Could not find target to scroll into view.', timestamp });
+    }
+    targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await new Promise(r => setTimeout(r, 200));
+    const rect = targetElement.getBoundingClientRect();
+    return makeResult({
+      success: true,
+      action: 'SCROLL_INTO_VIEW',
+      detail: `Target scrolled into view at viewport y=${Math.round(rect.top)}`,
+      bbox: { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) },
+      timestamp
+    });
+  }
+
   const targetElement = resolveElement(target || {});
   if (!targetElement) {
     return makeResult({ success: false, action, error: 'TARGET_NOT_FOUND', detail: 'Could not resolve target element on current page layout.', timestamp });
   }
 
   if (!isElementVisible(targetElement)) {
-    return makeResult({ success: false, action, error: 'TARGET_NOT_VISIBLE', detail: `Target element <${targetElement.tagName.toLowerCase()}> is hidden or outside the viewport.`, timestamp });
+    // Try scrolling it into view once before failing
+    targetElement.scrollIntoView({ behavior: 'instant', block: 'center' });
+    if (!isElementVisible(targetElement)) {
+      return makeResult({ success: false, action, error: 'TARGET_NOT_VISIBLE', detail: `Target element <${targetElement.tagName.toLowerCase()}> is hidden or outside the viewport.`, timestamp });
+    }
   }
 
-  if (targetElement.disabled) {
+  if (targetElement.disabled || targetElement.getAttribute('aria-disabled') === 'true') {
     return makeResult({ success: false, action, error: 'TARGET_DISABLED', detail: 'Target element is currently in a disabled state.', timestamp });
+  }
+
+  if (action === 'SELECT') {
+    if (targetElement instanceof HTMLSelectElement) {
+      const optionToSelect = text || target?.text || '';
+      let matched = false;
+      for (let i = 0; i < targetElement.options.length; i++) {
+        const opt = targetElement.options[i];
+        if (opt.value === optionToSelect || (opt.text && opt.text.trim().toLowerCase() === optionToSelect.toLowerCase())) {
+          targetElement.selectedIndex = i;
+          matched = true;
+          break;
+        }
+      }
+      targetElement.dispatchEvent(new Event('input', { bubbles: true }));
+      targetElement.dispatchEvent(new Event('change', { bubbles: true }));
+      return makeResult({
+        success: true,
+        action: 'SELECT',
+        target: target?.elementId || targetElement.dataset?.pbId || targetElement.tagName.toLowerCase(),
+        selected_value: targetElement.value,
+        matched,
+        detail: `Selected option '${targetElement.value}' in <select>`,
+        timestamp
+      });
+    }
+  }
+
+  if (action === 'CHECK' || action === 'UNCHECK') {
+    if (targetElement instanceof HTMLInputElement && (targetElement.type === 'checkbox' || targetElement.type === 'radio')) {
+      const desiredState = action === 'CHECK';
+      if (targetElement.checked !== desiredState) {
+        targetElement.click();
+      }
+      return makeResult({
+        success: true,
+        action,
+        checked: targetElement.checked,
+        detail: `Checkbox set to checked=${targetElement.checked}`,
+        timestamp
+      });
+    }
   }
 
   if (action === 'CLICK') {

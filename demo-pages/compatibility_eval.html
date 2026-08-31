@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PrivyBrowse AI — Real-World Website Compatibility Evaluation Portal</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --primary: #38bdf8;
+      --accent: #818cf8;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --success: #34d399;
+      --danger: #f87171;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 24px; }
+    header.sticky-header { position: sticky; top: 0; z-index: 100; background: rgba(30, 41, 59, 0.95); backdrop-filter: blur(8px); padding: 16px 24px; border-bottom: 1px solid var(--border); margin: -24px -24px 24px -24px; display: flex; justify-content: space-between; align-items: center; }
+    .badge { background: #0284c7; color: white; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: bold; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 20px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+    .card h2 { font-size: 18px; margin-bottom: 12px; color: var(--primary); border-bottom: 1px solid #334155; padding-bottom: 6px; }
+    label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted); font-weight: 500; }
+    input[type="text"], input[type="email"], input[type="password"], select, textarea {
+      width: 100%; padding: 10px 14px; background: #0f172a; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 14px; margin-bottom: 14px; outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--primary); }
+    button, .btn {
+      display: inline-block; background: #2563eb; color: white; padding: 10px 18px; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 0.15s;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #475569; cursor: not-allowed; opacity: 0.6; }
+    .btn-secondary { background: #334155; }
+    .btn-secondary:hover { background: #475569; }
+    .checkbox-group, .radio-group { margin-bottom: 14px; }
+    .checkbox-group label, .radio-group label { display: inline-flex; align-items: center; gap: 8px; color: var(--text); cursor: pointer; margin-right: 14px; }
+    .scroll-box { max-height: 180px; overflow-y: auto; background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-bottom: 12px; }
+    
+    /* Modal / Overlay */
+    .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 999; justify-content: center; align-items: center; }
+    .modal-content { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 24px; max-width: 480px; width: 90%; }
+    
+    /* Cookie Banner */
+    .cookie-banner { position: fixed; bottom: 16px; left: 16px; right: 16px; background: #1e293b; border: 1px solid var(--accent); border-radius: 8px; padding: 16px 24px; z-index: 500; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+    
+    /* Canvas / Visual Region */
+    canvas#visualUiCanvas { background: #020617; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; width: 100%; height: 80px; }
+  </style>
+</head>
+<body>
+
+  <!-- Sticky Header Navigation -->
+  <header class="sticky-header">
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <h1 style="font-size: 20px; font-weight: 700; color: #fff;">PrivyBrowse AI <span style="color: var(--primary);">Compatibility Hub</span></h1>
+      <span class="badge">20 Test Scenarios</span>
+    </div>
+    <div id="spaNav" style="display: flex; gap: 10px;">
+      <button class="btn btn-secondary" onclick="navigateSPA('Overview')">Overview</button>
+      <button class="btn btn-secondary" onclick="navigateSPA('Products')">Products</button>
+      <button class="btn btn-secondary" onclick="navigateSPA('Checkout')">Checkout</button>
+    </div>
+  </header>
+
+  <div class="grid">
+
+    <!-- 1. Decoupled Form Labels -->
+    <div class="card">
+      <h2>1. Decoupled Form Labels</h2>
+      <label for="usr_email">Applicant Official Email Address</label>
+      <input type="email" id="usr_email" name="applicant_email">
+      
+      <label for="usr_org">Indian Research Affiliation</label>
+      <input type="text" id="usr_org" name="applicant_org">
+      <button id="btn_save_profile">Save Profile</button>
+    </div>
+
+    <!-- 2. Dynamic DOM & Delayed Render -->
+    <div class="card">
+      <h2>2. Dynamic DOM & Delayed Render</h2>
+      <button id="btn_trigger_ajax" onclick="loadDynamicContent()">Request Authorization Token</button>
+      <div id="dynamicContainer" style="margin-top: 14px; min-height: 40px;">
+        <span style="color: var(--muted); font-size: 13px;">No token generated yet.</span>
+      </div>
+    </div>
+
+    <!-- 3. Standard & Custom Dropdowns -->
+    <div class="card">
+      <h2>3. Dropdowns & Select Menus</h2>
+      <label for="sel_mission">Target Spacecraft Mission</label>
+      <select id="sel_mission" name="mission">
+        <option value="none">-- Select Mission --</option>
+        <option value="chandrayaan_3">Chandrayaan-3 Lunar Lander</option>
+        <option value="aditya_l1">Aditya-L1 Solar Observatory</option>
+        <option value="gaganyaan">Gaganyaan Crew Module</option>
+        <option value="mars_orbiter">Mangalyaan Mars Orbiter</option>
+      </select>
+
+      <div id="dropdownSelectionStatus" style="font-size: 13px; color: var(--success); margin-top: 6px;"></div>
+    </div>
+
+    <!-- 4. Checkboxes & Radio Button States -->
+    <div class="card">
+      <h2>4. Checkbox & Radio Controls</h2>
+      <div class="checkbox-group">
+        <label>
+          <input type="checkbox" id="chk_agree_terms" checked>
+          I accept data safety guidelines
+        </label>
+        <label>
+          <input type="checkbox" id="chk_subscribe_updates">
+          Subscribe to ISRO telemetry feed
+        </label>
+      </div>
+
+      <div class="radio-group">
+        <label><input type="radio" name="comm_channel" value="secure_bridge" checked> Secure Bridge</label>
+        <label><input type="radio" name="comm_channel" value="simulation"> Simulation Only</label>
+      </div>
+    </div>
+
+    <!-- 5. Ambiguous Buttons Disambiguation -->
+    <div class="card">
+      <h2>5. Ambiguous Buttons</h2>
+      <p style="font-size: 13px; color: var(--muted); margin-bottom: 12px;">Multiple candidate actions with shared base verbs:</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        <button id="btn_buy_generic" class="btn btn-secondary">Buy</button>
+        <button id="btn_buy_now" class="btn btn-secondary">Buy Now</button>
+        <button id="btn_buy_apples" style="background: var(--success); color: black;">Buy Organic Apples</button>
+        <button id="btn_buy_used" class="btn btn-secondary">Buy Used</button>
+      </div>
+      <div id="buyStatus" style="margin-top: 10px; font-size: 13px; color: var(--primary);"></div>
+    </div>
+
+    <!-- 6. Shadow DOM Component -->
+    <div class="card">
+      <h2>6. Open Shadow DOM Element</h2>
+      <div id="shadowHost"></div>
+    </div>
+
+    <!-- 7. Disabled & Read-only Controls -->
+    <div class="card">
+      <h2>7. Disabled & Read-only Controls</h2>
+      <label for="input_locked">Encrypted Key (Read-only)</label>
+      <input type="text" id="input_locked" value="PRIVY-99482-ENCRYPTED" readonly>
+      <button id="btn_disabled_action" disabled>Unauthorized Action</button>
+    </div>
+
+    <!-- 8. Scrollable Container -->
+    <div class="card">
+      <h2>8. Nested Scroll Container</h2>
+      <div class="scroll-box" id="nestedScrollBox">
+        <p>Entry 01: Telemetry beacon initialized.</p>
+        <p>Entry 02: Orbit inclination verified at 21.4 degrees.</p>
+        <p>Entry 03: Local PII detection pipeline active.</p>
+        <p>Entry 04: Zero-leak privacy boundary established.</p>
+        <p>Entry 05: Action verification subsystem operational.</p>
+        <p style="color: var(--primary); font-weight: bold;" id="targetScrollItem">Entry 06: Target Deep Payload Item #9421</p>
+      </div>
+    </div>
+
+    <!-- 9. Visual-Only UI Canvas Region -->
+    <div class="card">
+      <h2>9. Visual-Only UI (OCR/OpenCV Target)</h2>
+      <canvas id="visualUiCanvas" width="320" height="70"></canvas>
+      <div id="visualClickStatus" style="font-size: 12px; color: var(--success); margin-top: 6px;"></div>
+    </div>
+
+    <!-- 10. Modal Trigger -->
+    <div class="card">
+      <h2>10. Modal Dialog Trigger</h2>
+      <button id="btn_open_modal" onclick="openModal()">Open System Security Modal</button>
+    </div>
+
+  </div>
+
+  <!-- Modal Dialog -->
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h3 id="modalTitle" style="color: var(--primary); margin-bottom: 12px;">Security Verification Required</h3>
+      <p style="color: var(--muted); font-size: 14px; margin-bottom: 20px;">Please confirm on-device execution of high-risk browser action.</p>
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button class="btn btn-secondary" onclick="closeModal()">Dismiss Modal</button>
+        <button id="btn_modal_confirm" onclick="confirmModalAction()">Authorize Action</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cookie Consent Banner -->
+  <div class="cookie-banner" id="cookieBanner">
+    <div>
+      <h4 style="font-size: 14px; font-weight: 600;">Cookie Preferences & Privacy Notice</h4>
+      <p style="font-size: 12px; color: var(--muted);">This application runs 100% on-device without remote tracking cookies.</p>
+    </div>
+    <div style="display: flex; gap: 10px;">
+      <button class="btn btn-secondary" id="btn_cookie_necessary" onclick="dismissCookies('NECESSARY')">Necessary Only</button>
+      <button id="btn_cookie_accept_all" onclick="dismissCookies('ALL')">Accept On-Device Preferences</button>
+    </div>
+  </div>
+
+  <script>
+    // 1. Dynamic Render
+    function loadDynamicContent() {
+      const container = document.getElementById("dynamicContainer");
+      container.innerHTML = '<span style="color: var(--accent);">Processing cryptographic handshake...</span>';
+      setTimeout(() => {
+        container.innerHTML = '<button id="btn_confirm_token" style="background: var(--success); color: black;" onclick="tokenConfirmed()">Confirm Auth Token #8291</button>';
+      }, 300);
+    }
+    function tokenConfirmed() {
+      document.getElementById("dynamicContainer").innerHTML = '<span style="color: var(--success); font-weight: bold;">Token #8291 Validated!</span>';
+    }
+
+    // 2. Ambiguous Button clicks
+    document.getElementById("btn_buy_apples").addEventListener("click", () => {
+      document.getElementById("buyStatus").innerText = "Successfully selected Organic Apples!";
+    });
+
+    // 3. Dropdown change listener
+    document.getElementById("sel_mission").addEventListener("change", (e) => {
+      document.getElementById("dropdownSelectionStatus").innerText = `Selected: ${e.target.options[e.target.selectedIndex].text}`;
+    });
+
+    // 4. Modal Handlers
+    function openModal() {
+      document.getElementById("modalBackdrop").style.display = "flex";
+    }
+    function closeModal() {
+      document.getElementById("modalBackdrop").style.display = "none";
+    }
+    function confirmModalAction() {
+      closeModal();
+      alert("Action Authorized Successfully!");
+    }
+
+    // 5. Cookie Dismissal
+    function dismissCookies(mode) {
+      document.getElementById("cookieBanner").style.display = "none";
+    }
+
+    // 6. SPA Route Switcher
+    function navigateSPA(view) {
+      window.history.pushState({ view }, view, `?view=${view.toLowerCase()}`);
+      document.title = `PrivyBrowse AI — ${view} View`;
+    }
+
+    // 7. Shadow DOM Initialization
+    (function initShadowDom() {
+      const host = document.getElementById("shadowHost");
+      if (host && host.attachShadow) {
+        const shadow = host.attachShadow({ mode: "open" });
+        shadow.innerHTML = `
+          <style>
+            .shadow-card { background: #0f172a; padding: 12px; border-radius: 6px; border: 1px dashed #38bdf8; }
+            button { background: #818cf8; color: black; border: none; padding: 8px 14px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+          </style>
+          <div class="shadow-card">
+            <p style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">Encapsulated Shadow DOM Component</p>
+            <button id="btn_shadow_action" onclick="this.innerText='Shadow Clicked!'">Execute Shadow Action</button>
+          </div>
+        `;
+      }
+    })();
+
+    // 8. Visual UI Canvas Rendering (OCR/OpenCV target)
+    (function renderVisualCanvas() {
+      const canvas = document.getElementById("visualUiCanvas");
+      if (canvas && canvas.getContext) {
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#1e293b";
+        ctx.fillRect(10, 10, 300, 50);
+        ctx.strokeStyle = "#38bdf8";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(10, 10, 300, 50);
+        
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 16px sans-serif";
+        ctx.fillText("VISUAL ACTION BUTTON", 50, 42);
+
+        canvas.addEventListener("click", () => {
+          document.getElementById("visualClickStatus").innerText = "Visual Button Click Verified via Coordinates!";
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

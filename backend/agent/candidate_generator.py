@@ -155,7 +155,34 @@ class CandidateGenerator:
                     reason=f"Matches input target for objective '{objective.description}'"
                 ))
 
-            # (B) Button & Submission Candidates
+            # (B) Checkbox & Radio Candidates
+            elif raw_type in ("CHECKBOX", "RADIO") or input_type_attr in ("checkbox", "radio"):
+                is_checked = attrs.get("checked", False)
+                candidates.append(CandidateAction(
+                    action=ActionType.CLICK,
+                    target_id=el_id,
+                    target={"x": cx, "y": cy},
+                    target_description=f"Checkbox/Radio '{el.get('label') or el_text or attrs.get('form_label') or el_id}' (Checked: {is_checked})",
+                    confidence=conf,
+                    risk_level=RiskLevel.LOW,
+                    requires_confirmation=False,
+                    reason=f"Toggle control for '{objective.semantic_intent}'"
+                ))
+
+            # (C) Select / Dropdown Candidates
+            elif raw_type in ("SELECT", "OPTION") or tag_name in ("select", "option") or attrs.get("role") in ("combobox", "listbox", "option"):
+                candidates.append(CandidateAction(
+                    action=ActionType.CLICK,
+                    target_id=el_id,
+                    target={"x": cx, "y": cy},
+                    target_description=f"Dropdown/Option '{el.get('label') or el_text or el_id}'",
+                    confidence=conf,
+                    risk_level=RiskLevel.LOW,
+                    requires_confirmation=False,
+                    reason=f"Select menu candidate for '{objective.semantic_intent}'"
+                ))
+
+            # (D) Button & Submission Candidates
             elif is_button:
                 risk = RiskLevel.LOW
                 req_confirm = False
@@ -170,20 +197,20 @@ class CandidateGenerator:
                     action=ActionType.CLICK,
                     target_id=el_id,
                     target={"x": cx, "y": cy},
-                    target_description=f"Button '{el_text or el.get('placeholder') or attrs.get('placeholder') or attrs.get('name') or el_id}'",
+                    target_description=f"Button '{el.get('label') or el_text or el.get('placeholder') or attrs.get('placeholder') or attrs.get('name') or el_id}'",
                     confidence=conf,
                     risk_level=risk,
                     requires_confirmation=req_confirm,
                     reason=f"Interactive button candidate for '{objective.semantic_intent}'"
                 ))
 
-            # (C) Link Candidates
+            # (E) Link Candidates
             elif is_link:
                 candidates.append(CandidateAction(
                     action=ActionType.CLICK,
                     target_id=el_id,
                     target={"x": cx, "y": cy},
-                    target_description=f"Link '{el_text or el_id}'",
+                    target_description=f"Link '{el.get('label') or el_text or el_id}'",
                     confidence=conf,
                     risk_level=RiskLevel.LOW,
                     requires_confirmation=False,

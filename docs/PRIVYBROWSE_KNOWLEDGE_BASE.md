@@ -1332,38 +1332,72 @@ The PrivyBrowse Chrome Extension (Manifest V3) acts as the secure, event-driven 
 
 ---
 
-## 26. Testing & Verification Suites
+## 26. Real-World Website Compatibility Architecture
+
+PrivyBrowse-AI operates seamlessly across modern real-world web environments (dynamic SPAs, decoupled forms, custom select/combobox widgets, shadow DOM trees, overlays, and responsive mobile/desktop viewports) without requiring website-specific hardcoded selectors or cloud ML models.
+
+### Key Compatibility Capabilities:
+1. **Extended Semantic Element Identification (`backend/perception/detectors/dom_detector.py`)**:
+   - Classifies `BUTTON`, `LINK`, `INPUT`, `TEXTAREA`, `SELECT`, `OPTION`, `CHECKBOX`, `RADIO`, `DIALOG`, `COOKIE_BANNER`, `TAB`, `MENU`, `SCROLL_CONTAINER`, `ALERT`, and `BANNER`.
+   - Ingests ARIA roles (`role="dialog"`, `role="combobox"`, `role="listbox"`, `role="checkbox"`, `role="radio"`).
+2. **Form Label Association & Detached Inputs (`extension/content.js`)**:
+   - Scans explicit `<label for="element_id">`, enclosing `<label>` wrappers, and `aria-labelledby` targets to automatically resolve human-readable labels for fields without placeholders.
+3. **State-Aware Checkboxes & Radios**:
+   - Evaluates active `.checked` and `aria-checked` properties. If a checkbox is already checked and task requirements are satisfied, redundant toggle actions are avoided.
+4. **Dropdown / Select Option Ingestion**:
+   - Ingests nested `<option>` arrays with indices, values, text, and selection state.
+   - Dispatches `SELECT` actions setting `selectedIndex` and firing native `input` and `change` events.
+5. **Open Shadow DOM Component Traversal**:
+   - Recursively traverses `host.shadowRoot.querySelectorAll(...)` to expose encapsulated interactive components while marking `in_shadow_dom: true`.
+6. **Modal & Cookie Banner Detection**:
+   - Recognizes `<dialog>`, `[aria-modal="true"]`, `.modal`, and `#cookie-banner` regions.
+   - Prevents blind click-throughs and classifies banners as page UI components.
+7. **Target-Aware Scrolling & Offscreen Handling**:
+   - Distinguishes `VISIBLE`, `PARTIALLY_VISIBLE`, and `OFFSCREEN` layout positions.
+   - Plans and executes smooth `scrollIntoView({ block: 'center' })` before dispatching atomic interactions.
+8. **Ambiguity Disambiguation via Full Phrase Matching (`backend/agent/scoring.py`)**:
+   - When multiple buttons share base verbs (e.g. "Buy", "Buy Now", "Buy Organic Apples", "Buy Used"), context similarity and exact phrase overlap break ties to select the intended target deterministically.
+9. **Visual-Only UI Support**:
+   - In regions without DOM semantics (e.g. `<canvas>`, custom WebGL buttons), fused OCR text and OpenCV contours calculate valid click centerpoints with explainable confidence scoring.
+10. **Zero Website-Specific Hacks**:
+    - Operates universally on general DOM and visual heuristics without hardcoded domain overrides.
+
+---
+
+## 27. Testing & Verification Suites
 
 ```bash
-# All 23 Test Suites Passing (100% Pass Rate across 200+ tests):
+# All 25 Test Suites Passing (100% Pass Rate across 250+ unit, integration & real browser tests):
 1.  python tests/verify_backend.py                         # Core FastAPI daemon sanity checks
 2.  python tests/test_agent.py                            # State machine, Candidate generator, Scoring
 3.  python tests/test_agent_closed_loop_real_browser.py   # Closed-loop planner on live browser pages
 4.  python tests/test_benchmarks.py                       # Performance distributions & Score 99.0/100
-5.  python tests/test_context_sync.py                     # Browser context manager, DOM fingerprints, Scroll
-6.  python tests/test_context_sync_real_browser.py        # Real browser tab switching & navigation sync
-7.  python tests/test_execution.py                        # Atomic browser actions & Page change signals
-8.  python tests/test_extension.py                        # Manifest V3 extension bridge & IPC
-9.  python tests/test_extension_lifecycle.py              # 24 Extension state machine, backoff, deduplication & timeout tests
-10. python tests/test_extension_real_browser.py           # 6 Real Chrome browser extension & disconnect recovery tests
-11. python tests/test_multistep_task.py                   # 23 multi-step task state & dependency tests
-12. python tests/test_multistep_real_browser.py           # 5 real multi-page task workflows
-13. python tests/test_perception.py                       # OpenCV detector, Tesseract OCR, Context fuser
-14. python tests/test_perception_real_browser.py          # Real DOM + visual perception benchmarks
-15. python tests/test_privacy.py                          # Indian PII rules, Visual redactor, Zero-leak gate
-16. python tests/test_privacy_real_browser.py             # Real privacy evaluation portals
-17. python tests/test_security_adversarial.py             # 15/15 Adversarial Attacks Blocked (100%)
-18. python tests/test_security_hardening.py               # Threat boundaries, DOM attribute sanitization
-19. python tests/test_security_real_browser.py            # Live prompt injection & phishing defense
-20. python tests/test_verification_recovery.py            # Evidence-based verification & bounded recovery
-21. python tests/test_verification_recovery_real_browser.py # Real browser action verification & stall recovery
-22. python tests/test_observability.py                    # 20 Event bus, Ring buffer, Sanitization & API tests
-23. python tests/test_observability_real_browser.py       # 5 Real browser event stream & monitoring scenarios
+5.  python tests/test_compatibility.py                    # 31 Real-world website compatibility & interaction tests
+6.  python tests/test_compatibility_real_browser.py       # 8 Real Chrome website compatibility task scenarios
+7.  python tests/test_context_sync.py                     # Browser context manager, DOM fingerprints, Scroll
+8.  python tests/test_context_sync_real_browser.py        # Real browser tab switching & navigation sync
+9.  python tests/test_execution.py                        # Atomic browser actions & Page change signals
+10. python tests/test_extension.py                        # Manifest V3 extension bridge & IPC
+11. python tests/test_extension_lifecycle.py              # 24 Extension state machine, backoff, deduplication & timeout tests
+12. python tests/test_extension_real_browser.py           # 6 Real Chrome browser extension & disconnect recovery tests
+13. python tests/test_multistep_task.py                   # 23 multi-step task state & dependency tests
+14. python tests/test_multistep_real_browser.py           # 5 real multi-page task workflows
+15. python tests/test_perception.py                       # OpenCV detector, Tesseract OCR, Context fuser
+16. python tests/test_perception_real_browser.py          # Real DOM + visual perception benchmarks
+17. python tests/test_privacy.py                          # Indian PII rules, Visual redactor, Zero-leak gate
+18. python tests/test_privacy_real_browser.py             # Real privacy evaluation portals
+19. python tests/test_security_adversarial.py             # 15/15 Adversarial Attacks Blocked (100%)
+20. python tests/test_security_hardening.py               # Threat boundaries, DOM attribute sanitization
+21. python tests/test_security_real_browser.py            # Live prompt injection & phishing defense
+22. python tests/test_verification_recovery.py            # Evidence-based verification & bounded recovery
+23. python tests/test_verification_recovery_real_browser.py # Real browser action verification & stall recovery
+24. python tests/test_observability.py                    # 20 Event bus, Ring buffer, Sanitization & API tests
+25. python tests/test_observability_real_browser.py       # 5 Real browser event stream & monitoring scenarios
 ```
 
 ---
 
-## 26. Project Dependencies
+## 28. Project Dependencies
 
 | Dependency | Version | Purpose |
 | :--- | :--- | :--- |

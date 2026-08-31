@@ -125,14 +125,17 @@ class ObservationDifferencer:
                         diff.target_value_populated = len(curr_val.strip()) > 0
                         evidence.append(f"Target '{target_id}' value updated")
 
-                # Check state attribute changes (disabled, checked, aria-expanded, state_clicked)
+                # Check state attribute changes (disabled, checked, aria-expanded, state_clicked, value, selectedIndex)
                 if prev_target:
-                    for attr in ("disabled", "checked", "aria-expanded", "hidden", "selected", "state_clicked"):
+                    for attr in ("disabled", "checked", "aria-expanded", "hidden", "selected", "state_clicked", "value", "selectedIndex"):
                         p_attr = prev_target.get(attr) or prev_target.get("attributes", {}).get(attr)
                         c_attr = curr_target.get(attr) or curr_target.get("attributes", {}).get(attr)
                         if p_attr != c_attr:
                             diff.target_state_changed = True
-                            evidence.append(f"Target '{target_id}' attribute '{attr}' changed: {p_attr} -> {c_attr}")
+                            if is_sensitive and attr == "value":
+                                evidence.append(f"Target '{target_id}' attribute '{attr}' changed [SENSITIVE VALUE MASKED]")
+                            else:
+                                evidence.append(f"Target '{target_id}' attribute '{attr}' changed: {p_attr} -> {c_attr}")
 
         # 5. Scroll Geometry Diff
         if prev_scroll and curr_scroll:
