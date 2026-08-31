@@ -16,84 +16,201 @@ class InvalidStateTransitionError(Exception):
 
 # Map of valid state transitions
 VALID_TRANSITIONS: Dict[AgentState, Set[AgentState]] = {
+    AgentState.CREATED: {
+        AgentState.UNDERSTANDING,
+        AgentState.PLANNING,
+        AgentState.OBSERVING,
+        AgentState.PERCEIVING,
+        AgentState.IDLE,
+        AgentState.CANCELLED,
+        AgentState.FAILED
+    },
     AgentState.IDLE: {
+        AgentState.CREATED,
+        AgentState.OBSERVING,
+        AgentState.PERCEIVING,
+        AgentState.UNDERSTANDING,
+        AgentState.PLANNING,
+        AgentState.PAUSED,
+        AgentState.CANCELLED
+    },
+    AgentState.PLANNED: {
+        AgentState.READY,
         AgentState.OBSERVING,
         AgentState.PLANNING,
-        AgentState.PAUSED
+        AgentState.EXECUTING,
+        AgentState.ACTING,
+        AgentState.CANCELLED,
+        AgentState.FAILED
+    },
+    AgentState.READY: {
+        AgentState.EXECUTING,
+        AgentState.ACTING,
+        AgentState.PLANNING,
+        AgentState.OBSERVING,
+        AgentState.NEEDS_CONFIRMATION,
+        AgentState.AWAITING_CONFIRMATION,
+        AgentState.CANCELLED,
+        AgentState.FAILED
     },
     AgentState.OBSERVING: {
         AgentState.PERCEIVING,
+        AgentState.UNDERSTANDING,
+        AgentState.PLANNING,
         AgentState.FAILED,
         AgentState.PAUSED,
         AgentState.BLOCKED,
+        AgentState.CANCELLED,
         AgentState.IDLE
     },
     AgentState.PERCEIVING: {
         AgentState.UNDERSTANDING,
+        AgentState.PLANNING,
         AgentState.FAILED,
         AgentState.PAUSED,
         AgentState.BLOCKED,
+        AgentState.CANCELLED,
         AgentState.IDLE
     },
     AgentState.UNDERSTANDING: {
         AgentState.PLANNING,
+        AgentState.READY,
         AgentState.FAILED,
         AgentState.PAUSED,
         AgentState.BLOCKED,
+        AgentState.CANCELLED,
         AgentState.IDLE
     },
     AgentState.PLANNING: {
+        AgentState.READY,
         AgentState.VALIDATING,
+        AgentState.EXECUTING,
+        AgentState.ACTING,
+        AgentState.NEEDS_CONFIRMATION,
+        AgentState.AWAITING_CONFIRMATION,
         AgentState.COMPLETED,
         AgentState.FAILED,
         AgentState.PAUSED,
         AgentState.BLOCKED,
+        AgentState.CANCELLED,
         AgentState.IDLE
     },
     AgentState.VALIDATING: {
+        AgentState.READY,
         AgentState.ACTING,
+        AgentState.EXECUTING,
+        AgentState.NEEDS_CONFIRMATION,
+        AgentState.AWAITING_CONFIRMATION,
         AgentState.BLOCKED,
         AgentState.PLANNING,
         AgentState.FAILED,
         AgentState.PAUSED,
+        AgentState.CANCELLED,
         AgentState.IDLE
     },
     AgentState.ACTING: {
         AgentState.VERIFYING,
+        AgentState.EXECUTING,
+        AgentState.RECOVERING,
         AgentState.FAILED,
         AgentState.PAUSED,
+        AgentState.CANCELLED,
         AgentState.IDLE
+    },
+    AgentState.EXECUTING: {
+        AgentState.VERIFYING,
+        AgentState.WAITING,
+        AgentState.RECOVERING,
+        AgentState.FAILED,
+        AgentState.PAUSED,
+        AgentState.CANCELLED,
+        AgentState.IDLE
+    },
+    AgentState.WAITING: {
+        AgentState.VERIFYING,
+        AgentState.EXECUTING,
+        AgentState.RECOVERING,
+        AgentState.OBSERVING,
+        AgentState.CANCELLED,
+        AgentState.FAILED
     },
     AgentState.VERIFYING: {
         AgentState.OBSERVING,
         AgentState.PLANNING,
+        AgentState.READY,
+        AgentState.EXECUTING,
+        AgentState.ACTING,
+        AgentState.RECOVERING,
         AgentState.COMPLETED,
         AgentState.FAILED,
         AgentState.PAUSED,
         AgentState.BLOCKED,
+        AgentState.CANCELLED,
         AgentState.IDLE
+    },
+    AgentState.RECOVERING: {
+        AgentState.OBSERVING,
+        AgentState.PERCEIVING,
+        AgentState.PLANNING,
+        AgentState.READY,
+        AgentState.EXECUTING,
+        AgentState.ACTING,
+        AgentState.BLOCKED,
+        AgentState.CANCELLED,
+        AgentState.FAILED,
+        AgentState.IDLE
+    },
+    AgentState.NEEDS_CONFIRMATION: {
+        AgentState.READY,
+        AgentState.EXECUTING,
+        AgentState.ACTING,
+        AgentState.PLANNING,
+        AgentState.CANCELLED,
+        AgentState.FAILED,
+        AgentState.BLOCKED
+    },
+    AgentState.AWAITING_CONFIRMATION: {
+        AgentState.READY,
+        AgentState.EXECUTING,
+        AgentState.ACTING,
+        AgentState.PLANNING,
+        AgentState.CANCELLED,
+        AgentState.FAILED,
+        AgentState.BLOCKED
     },
     AgentState.PAUSED: {
         AgentState.OBSERVING,
         AgentState.PERCEIVING,
         AgentState.PLANNING,
+        AgentState.READY,
+        AgentState.EXECUTING,
+        AgentState.ACTING,
+        AgentState.CANCELLED,
         AgentState.IDLE,
         AgentState.FAILED
     },
     AgentState.BLOCKED: {
         AgentState.IDLE,
         AgentState.PLANNING,
+        AgentState.RECOVERING,
         AgentState.ACTING,
+        AgentState.EXECUTING,
+        AgentState.CANCELLED,
         AgentState.FAILED
     },
     AgentState.COMPLETED: {
         AgentState.IDLE,
-        AgentState.OBSERVING
+        AgentState.CREATED
     },
     AgentState.FAILED: {
         AgentState.IDLE,
-        AgentState.OBSERVING
+        AgentState.CREATED,
+        AgentState.RECOVERING
     },
+    AgentState.CANCELLED: {
+        AgentState.IDLE,
+        AgentState.CREATED
+    }
 }
 
 

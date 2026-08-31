@@ -10,19 +10,23 @@ from pydantic import BaseModel, Field
 
 
 class AgentState(str, Enum):
+    CREATED = "CREATED"
     IDLE = "IDLE"
     PLANNED = "PLANNED"
     RUNNING = "RUNNING"
+    READY = "READY"
     OBSERVING = "OBSERVING"
     PERCEIVING = "PERCEIVING"
     UNDERSTANDING = "UNDERSTANDING"
     PLANNING = "PLANNING"
     VALIDATING = "VALIDATING"
     ACTING = "ACTING"
+    EXECUTING = "EXECUTING"
     VERIFYING = "VERIFYING"
     WAITING = "WAITING"
     RECOVERING = "RECOVERING"
     AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
+    NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"
     PAUSED = "PAUSED"
     BLOCKED = "BLOCKED"
     COMPLETED = "COMPLETED"
@@ -32,6 +36,40 @@ class AgentState(str, Enum):
 
 # TaskState alias mapped to AgentState for semantic clarity
 TaskState = AgentState
+
+
+class CheckpointType(str, Enum):
+    PAGE_REACHED = "PAGE_REACHED"
+    TARGET_IDENTIFIED = "TARGET_IDENTIFIED"
+    ACTION_COMPLETED = "ACTION_COMPLETED"
+    STATE_VERIFIED = "STATE_VERIFIED"
+
+
+class TaskCheckpoint(BaseModel):
+    """Reliable milestone checkpoint for crash recovery and state rollback."""
+    id: str
+    task_id: str
+    checkpoint_type: CheckpointType
+    step_index: int
+    url: str
+    dom_fingerprint: str = ""
+    timestamp: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ActionRecord(BaseModel):
+    """Structured immutable audit record of a dispatched browser action."""
+    action_id: str
+    task_id: str
+    timestamp: str
+    action_type: str
+    target_id: Optional[str] = None
+    preconditions_met: bool = True
+    postconditions_met: bool = False
+    result: Dict[str, Any] = Field(default_factory=dict)
+    verification_result: Optional[str] = None
+    failure_reason: Optional[str] = None
+    recovery_attempt: int = 0
 
 
 class ActionType(str, Enum):

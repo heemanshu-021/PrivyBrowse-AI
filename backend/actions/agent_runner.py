@@ -5,6 +5,7 @@ Dynamic Replanning, Step Dependencies, Bounded Recovery, and Human Confirmation 
 """
 
 import time
+import threading
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
@@ -12,7 +13,8 @@ from backend.agent.schemas import (
     AgentState, AgentTask, TaskConstraints, RiskLevel,
     CandidateAction, ValidationResult, VerificationResult,
     VerificationStatus, FailureCategory, RecoveryRecommendation,
-    ActionType, TaskStep, ObjectiveStatus, TaskResult
+    ActionType, TaskStep, ObjectiveStatus, TaskResult,
+    CheckpointType, TaskCheckpoint, ActionRecord
 )
 from backend.agent.planner import AgentPlanner
 from backend.actions.executor import ActionExecutor
@@ -125,13 +127,52 @@ class EndToEndAgentRunner:
             task_id=task_id
         )
 
-        # 3. GENERATE EXPECTED STATE
+        # 3. CHECK IDEMPOTENCY & SAVE TARGET CHECKPOINT
+        if self.planner.memory.is_action_idempotent(candidate.action.value, candidate.target_id, candidate.text, sanitized_elements, current_url):
+            self.planner.memory.save_checkpoint(
+                task_id=task_id or "task-0",
+                checkpoint_type=CheckpointType.STATE_VERIFIED,
+                step_index=getattr(self.planner.current_task, "current_step_index", 0),
+                url=current_url,
+                metadata={"idempotent_skip": True, "target_id": candidate.target_id}
+            )
+            if self.planner.current_task and self.planner.current_task.current_step_index < len(self.planner.current_task.steps):
+                curr_step = self.planner.current_task.steps[self.planner.current_task.current_step_index]
+                curr_step.status = ObjectiveStatus.COMPLETED
+                curr_step.evidence = [f"Target '{candidate.target_id}' already in desired state."]
+                if curr_step.id not in self.planner.current_task.completed_steps:
+                    self.planner.current_task.completed_steps.append(curr_step.id)
+                if curr_step.id in self.planner.current_task.pending_steps:
+                    self.planner.current_task.pending_steps.remove(curr_step.id)
+                if self.planner.current_task.current_step_index < len(self.planner.current_task.steps) - 1:
+                    self.planner.current_task.current_step_index += 1
+
+            return {
+                "status": "SUCCESS",
+                "state": self.planner.state_machine.current_state.value,
+                "action": candidate.model_dump(),
+                "message": "Action already satisfied in target state (idempotent skip)",
+                "post_elements": sanitized_elements,
+                "post_url": current_url,
+                "latency_ms": round((time.perf_counter() - t0) * 1000.0, 2),
+                "agent_summary": self.planner.get_agent_status()
+            }
+
+        self.planner.memory.save_checkpoint(
+            task_id=task_id or "task-0",
+            checkpoint_type=CheckpointType.TARGET_IDENTIFIED,
+            step_index=getattr(self.planner.current_task, "current_step_index", 0),
+            url=current_url,
+            metadata={"target_id": candidate.target_id, "action": candidate.action.value}
+        )
+
+        # 4. GENERATE EXPECTED STATE
         target_el = next((e for e in sanitized_elements if e.get("id") == candidate.target_id), None)
         action_dict = candidate.model_dump()
         action_dict["confirmed_by_user"] = user_confirmed
         expected_state = self.planner.verifier.generate_expected_state(action_dict, target_el)
 
-        # 4. EXECUTE action
+        # 5. EXECUTE action
         exec_res = self.executor.execute_browser_action(
             action_json=action_dict,
             current_elements=sanitized_elements,
@@ -139,7 +180,15 @@ class EndToEndAgentRunner:
             user_confirmed=user_confirmed
         )
 
-        # 5. POST-ACTION OBSERVATION & EVIDENCE VERIFICATION
+        self.planner.memory.save_checkpoint(
+            task_id=task_id or "task-0",
+            checkpoint_type=CheckpointType.ACTION_COMPLETED,
+            step_index=getattr(self.planner.current_task, "current_step_index", 0),
+            url=current_url,
+            metadata={"action_result": exec_res.status.value, "success": exec_res.success}
+        )
+
+        # 6. POST-ACTION OBSERVATION & EVIDENCE VERIFICATION
         re_perception_required = exec_res.page_changed or exec_res.metadata.get("re_perception_required", False)
         if exec_res.error and exec_res.error.code in ("TAB_MISMATCH", "STALE_NAVIGATION", "DOM_MUTATION_MISMATCH", "STALE_DOCUMENT", "STALE_TARGET"):
             re_perception_required = True
@@ -178,6 +227,9 @@ class EndToEndAgentRunner:
                 for el in post_action_elements:
                     if el.get("id") == candidate.target_id:
                         el["state_clicked"] = True
+            elif candidate.action == ActionType.SCROLL:
+                prev_scroll = {"scrollX": 0.0, "scrollY": 0.0}
+                curr_scroll = {"scrollX": 0.0, "scrollY": float(action_dict.get("scroll_delta", {}).get("y", 400.0) or 400.0)}
 
         # Run Evidence-Based Verification
         verify_res = self.planner.verify_step_outcome(
@@ -202,6 +254,13 @@ class EndToEndAgentRunner:
         )
 
         if verify_res.success:
+            self.planner.memory.save_checkpoint(
+                task_id=task_id or "task-0",
+                checkpoint_type=CheckpointType.STATE_VERIFIED,
+                step_index=getattr(self.planner.current_task, "current_step_index", 0),
+                url=post_url,
+                metadata={"signal": verify_res.signal}
+            )
             self.events.action_verified(
                 signal=verify_res.signal,
                 evidence=verify_res.evidence,
@@ -214,7 +273,22 @@ class EndToEndAgentRunner:
                 task_id=task_id
             )
 
-        # 6. PROGRESS TRACKING & LOOP DETECTION
+        # 7. RECORD AUDIT RECORD
+        audit_record = ActionRecord(
+            action_id=f"act-{task_id or '0'}-{time.time()}",
+            task_id=task_id or "task-0",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            action_type=candidate.action.value,
+            target_id=candidate.target_id,
+            preconditions_met=True,
+            postconditions_met=verify_res.success,
+            result=exec_res.model_dump(),
+            verification_result=verify_res.status.value,
+            failure_reason=verify_res.details if not verify_res.success else None
+        )
+        self.planner.memory.record_action_audit(audit_record)
+
+        # 8. PROGRESS TRACKING & LOOP DETECTION
         action_sig = f"{candidate.action.value}:{candidate.target_id or candidate.text or ''}"
         dom_fp = getattr(live_ctx.dom_fingerprint, "hash", "") if (live_ctx and live_ctx.dom_fingerprint) else ""
         has_progress = verify_res.success and verify_res.status in (VerificationStatus.ACTION_VERIFIED, VerificationStatus.SCROLL_BOUNDARY)
@@ -225,8 +299,14 @@ class EndToEndAgentRunner:
             action_signature=action_sig,
             has_progress=has_progress
         )
+        self.planner.memory.record_state_snapshot(post_url, post_action_elements)
 
         is_stalled, loop_cat, loop_reason = self.progress_tracker.detect_loop_or_stall()
+        if not is_stalled and self.planner.memory.is_progress_stagnant(max_stagnant_turns=4):
+            is_stalled = True
+            loop_cat = FailureCategory.LOOP_DETECTED
+            loop_reason = "Progress stagnant: browser state unchanged across 4 turns"
+
         if is_stalled:
             verify_res.status = VerificationStatus.FAILED
             verify_res.failure_category = loop_cat
@@ -288,7 +368,8 @@ class EndToEndAgentRunner:
         current_url: str = "",
         max_turns: int = 15,
         user_confirmed: bool = False,
-        perception_callback: Optional[Any] = None
+        perception_callback: Optional[Any] = None,
+        existing_task: Optional[AgentTask] = None
     ) -> Dict[str, Any]:
         """
         Drives a full multi-turn, multi-step, multi-page closed-loop task execution:
@@ -301,13 +382,17 @@ class EndToEndAgentRunner:
         self.progress_tracker.reset()
         self.recovery_engine.reset()
 
-        # 1. Initialize Structured Task with Context Awareness
-        task = self.planner.create_task(
-            goal=task_goal,
-            constraints=TaskConstraints(max_actions=max_turns),
-            initial_elements=initial_elements,
-            current_url=current_url
-        )
+        # 1. Initialize or Resume Structured Task
+        if existing_task:
+            task = existing_task
+            self.planner.current_task = task
+        else:
+            task = self.planner.create_task(
+                goal=task_goal,
+                constraints=TaskConstraints(max_actions=max_turns),
+                initial_elements=initial_elements,
+                current_url=current_url
+            )
         task.status = AgentState.RUNNING
         self.active_task = task
 
@@ -390,8 +475,18 @@ class EndToEndAgentRunner:
             turn_results.append(turn_res)
 
             # Update working memory & context
-            if turn_res.get("post_elements"):
+            if turn_res.get("re_perception_required") and perception_callback and callable(perception_callback):
+                try:
+                    fresh_ctx = perception_callback()
+                    if isinstance(fresh_ctx, dict):
+                        current_elements = fresh_ctx.get("elements", current_elements)
+                        active_url = fresh_ctx.get("url", active_url)
+                except Exception:
+                    if turn_res.get("post_elements"):
+                        current_elements = turn_res["post_elements"]
+            elif turn_res.get("post_elements"):
                 current_elements = turn_res["post_elements"]
+
             if turn_res.get("post_url"):
                 active_url = turn_res["post_url"]
                 task.current_context = {"url": active_url, "elements_count": len(current_elements)}
@@ -517,6 +612,10 @@ class EndToEndAgentRunner:
         self.is_paused = False
         self.is_stopped = False
         task.status = AgentState.RUNNING
+        self.planner.memory.state_snapshots.clear()
+        self.progress_tracker.reset()
+        if task.constraints:
+            task.constraints.max_actions = max(task.constraints.max_actions, task.actions_executed + max_turns)
 
         # Continue closed-loop task execution with user confirmation enabled
         return self.run_closed_loop_task(
@@ -524,7 +623,8 @@ class EndToEndAgentRunner:
             initial_elements=current_elements,
             current_url=current_url,
             max_turns=max_turns,
-            user_confirmed=user_confirmed
+            user_confirmed=user_confirmed,
+            existing_task=task
         )
 
     def stop(self):
@@ -533,6 +633,20 @@ class EndToEndAgentRunner:
         if self.active_task:
             self.active_task.status = AgentState.CANCELLED
         self.planner.stop()
+
+    def cancel_task(self, task_id: Optional[str] = None) -> Dict[str, Any]:
+        """Explicitly cancels an active task, releases resources, and transitions state to CANCELLED."""
+        self.is_stopped = True
+        target_task = self.active_task
+        if target_task:
+            target_task.status = AgentState.CANCELLED
+        if self.planner.state_machine.can_transition_to(AgentState.CANCELLED):
+            self.planner.state_machine.transition_to(AgentState.CANCELLED, "User explicitly cancelled task")
+        return {
+            "status": "CANCELLED",
+            "task_id": target_task.task_id if target_task else task_id,
+            "message": "Task execution cancelled successfully"
+        }
 
     def pause(self):
         """Pauses autonomous execution preserving active task state."""

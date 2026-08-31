@@ -1707,4 +1707,54 @@ USER GOAL ──► FRONTEND ──► FASTAPI ──► PERCEPTION (OpenCV+OCR)
 * **41–60**: (41) OpenCV visual contours detect the bounding box even without DOM tags, (42) Eliminates multi-gigabyte RAM overhead and non-deterministic hallucination, (43) User goal is immutable in application state; DOM text is passive observation data, (44) `Frontend` $\rightarrow$ `main.py` $\rightarrow$ `PerceptionEngine` $\rightarrow$ `PIIDetector` $\rightarrow$ `PrivacyGate` $\rightarrow$ `Planner` $\rightarrow$ `Validator` $\rightarrow$ `Executor` $\rightarrow$ `ChangeDetector`, (45) Detects frontal human faces in screenshots for automatic blurring, (46) Explicit `gc.collect()` and cached singleton instances, (47) $\mathcal{O}(N \times M)$ where $N, M \le 50$, executing in $<0.1\text{ ms}$, (48) Confirmation state is stored in memory in trusted React/Python state, not readable or writable by DOM JS, (49) $0.35(Task) + 0.20(PII) + 0.20(Perception) + 0.15(Security) + 0.10(Recovery)$, (50) Uses `chrome.tabs.captureVisibleTab()`, (51) DOM geometry and OpenCV contours maintain ground truth bounding boxes, (52) Directly overlays solid or pixelated rectangles on raw PIL/OpenCV image arrays, (53) Applies aspect ratio scaling matrix, (54) Rejects coordinate injection and out-of-screen clickjacking, (55) Webpages cannot trigger or approve system-level confirmation modals, (56) Local regex matching on source strings without network egress, (57) Multi-lingual complex CAPTCHAs require human help, (58) Allows running OpenCV/Tesseract directly inside the browser extension without a local Python daemon, (59) Structured error handler masks all sensitive fields prior to serialization, (60) Space missions, satellite data portals, and internal telemetry demand zero data leakage and real-time offline autonomy.
 
 ---
+
+## 27. Production Task Execution Engine & Recovery System
+
+PrivyBrowse AI features a hardened, deterministic, production-grade task execution engine designed for reliable multi-step execution across complex real-world web applications.
+
+### 1. Strict State Machine & Lifecycle Management (`backend/agent/state_machine.py`)
+* **Explicit State Model**: `CREATED`, `UNDERSTANDING`, `PLANNING`, `READY`, `EXECUTING`, `WAITING`, `VERIFYING`, `RECOVERING`, `AWAITING_CONFIRMATION`, `PAUSED`, `BLOCKED`, `COMPLETED`, `FAILED`, `CANCELLED`.
+* **Transition Validation**: Strictly rejects illegal state jumps (e.g. `COMPLETED` $\to$ `EXECUTING` or `READY` $\to$ `COMPLETED`) with `InvalidStateTransitionError`.
+* **Terminal State Irreversibility**: Terminal states (`COMPLETED`, `FAILED`, `CANCELLED`) strictly prohibit action dispatch.
+
+### 2. Goal vs Intermediate Step Separation (`backend/agent/schemas.py`, `decomposer.py`)
+* User goal (e.g. *"Find Chandrayaan-3 telemetry and download archive"*) is immutable and decoupled from runtime sub-actions.
+* Steps contain explicit preconditions, dependencies, target elements, and completion criteria.
+
+### 3. Structured Milestone Checkpoints (`backend/agent/memory.py`)
+* Checkpoint types recorded during task execution:
+  1. `CHECKPOINT_PAGE_REACHED`: Page loaded and stabilized.
+  2. `CHECKPOINT_TARGET_IDENTIFIED`: Target element detected and validated.
+  3. `CHECKPOINT_ACTION_COMPLETED`: Browser action dispatched via bridge.
+  4. `CHECKPOINT_STATE_VERIFIED`: Post-action state mutation verified.
+* Checkpoints support stack rollback to recover cleanly from transient page states.
+
+### 4. Structured Action History & Audit Trails (`ActionRecord`)
+* Every executed action is logged with timing, preconditions, postconditions, and result metrics.
+* Sensitive fields (passwords, OTPs, Aadhaar, PAN, Card numbers) are scrubbed prior to audit persistence.
+
+### 5. Idempotency Guards (`backend/agent/memory.py`)
+* Automatically inspects target control state before issuing actions:
+  - **Checkboxes**: Skips redundant click if already in desired checked/unchecked state.
+  - **Navigation**: Skips navigation if current URL already matches target destination.
+  - **Inputs**: Skips typing if input already contains the required value.
+  - **Selects**: Skips dropdown mutation if desired option is already selected.
+
+### 6. Bounded Retries & Reason-Specific Recovery (`backend/agent/recovery.py`)
+* **Bounded Retries**: Maximum retries enforced per objective (default 2) and total per task (default 6).
+* **Reason-Specific Routing**:
+  - `TARGET_STALE`: Re-perceives DOM and re-identifies coordinates.
+  - `TARGET_NOT_FOUND`: Escalates from re-perception to alternative candidate generation.
+  - `NO_STATE_CHANGE`: Routes to alternative strategy (e.g. Enter key or parent element click).
+  - `UNEXPECTED_NAVIGATION`: Rebuilds browser context and resynchronizes task plan.
+  - `LOOP_DETECTED`: Triggers immediate `SAFE_STOP`.
+
+### 7. Progress Stagnation & Loop Detection
+* Records MD5 state snapshots hashing `(url, id, value, checked, selected, state_clicked)` across turns.
+* Halts execution with `SAFE_STOP` if 4 consecutive turns produce zero observable state changes or identical action patterns.
+
+### 8. Task Cancellation & Teardown
+* `cancel_task()` halts execution, releases locks, and transitions state to `CANCELLED`.
+
+---
 *End of PrivyBrowse AI Knowledge Base Document.*

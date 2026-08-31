@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrivyBrowse AI — Task Execution & Recovery Evaluation Portal</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --accent: #238636;
+      --text: #c9d1d9;
+      --text-bright: #ffffff;
+      --blue: #58a6ff;
+      --purple: #bc8cff;
+      --orange: #d29922;
+      --red: #f85149;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 24px; }
+    header { border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
+    h1 { color: var(--text-bright); font-size: 24px; }
+    .badge { background: #1f6feb22; color: var(--blue); padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; border: 1px solid #1f6feb55; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 20px; margin-bottom: 24px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
+    h2 { color: var(--text-bright); font-size: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    label { display: block; font-size: 13px; margin-bottom: 6px; color: var(--text); font-weight: 500; }
+    input[type="text"], input[type="email"], input[type="search"], select {
+      width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: #fff; font-size: 14px; margin-bottom: 12px;
+    }
+    .btn {
+      background: #238636; color: #fff; border: 1px solid rgba(240, 246, 252, 0.1); padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background 0.15s;
+    }
+    .btn:hover { background: #2ea043; }
+    .btn-secondary { background: #21262d; border-color: var(--border); }
+    .btn-secondary:hover { background: #30363d; }
+    .status-box { padding: 12px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; margin-top: 12px; font-size: 13px; }
+    .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .tag-green { background: #23863622; color: #3fb950; border: 1px solid #23863644; }
+    .tag-blue { background: #1f6feb22; color: #58a6ff; border: 1px solid #1f6feb44; }
+    .tag-orange { background: #d2992222; color: #d29922; border: 1px solid #d2992244; }
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 1000;
+    }
+    .modal { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; width: 440px; padding: 24px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>PrivyBrowse AI — Task Execution Engine Evaluation</h1>
+    <p style="font-size: 13px; color: #8b949e; margin-top: 4px;">SIH26171 | Real-World Multi-Step Execution & State Management Evaluation</p>
+  </div>
+  <span class="badge">EVALUATION HARNESS</span>
+</header>
+
+<div class="grid">
+  <!-- PHASE 1: RESEARCH & TELEMETRY SEARCH -->
+  <div class="card" id="phase1_search">
+    <h2><span class="tag tag-blue">Phase 1</span> ISRO Mission Telemetry Search</h2>
+    <p style="font-size: 13px; color: #8b949e; margin-bottom: 12px;">Tests search candidate generation, typing, form submission, and results verification.</p>
+    <label for="taskSearchInput">Mission Search Keyword</label>
+    <input type="search" id="taskSearchInput" placeholder="Search mission name (e.g. Aditya-L1)">
+    <button class="btn" id="btnTaskSearchSubmit" onclick="handleSearch()">Search Telemetry</button>
+    <div id="searchResults" class="status-box" style="display:none; margin-top: 12px;">
+      <strong>Search Results:</strong>
+      <div style="margin-top: 8px;">
+        <a href="#aditya-l1-detail" id="linkAdityaL1" style="color: var(--blue); text-decoration: underline;" onclick="selectResult('Aditya-L1 Solar Mission')">Aditya-L1 Solar Mission Details</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- PHASE 2: SCIENTIFIC DATA ACCESS PROFILE FORM -->
+  <div class="card" id="phase2_form">
+    <h2><span class="tag tag-green">Phase 2</span> Science Data Access Registration</h2>
+    <label for="applicantEmail">Researcher Email (Synthetic)</label>
+    <input type="email" id="applicantEmail" placeholder="scientist@isro.gov.in">
+    
+    <label for="selectMission">Select Research Mission</label>
+    <select id="selectMission">
+      <option value="none">-- Select Target Mission --</option>
+      <option value="chandrayaan3">Chandrayaan-3 Lunar Mission</option>
+      <option value="aditya_l1">Aditya-L1 Solar Observatory</option>
+      <option value="gaganyaan">Gaganyaan Crew Mission</option>
+    </select>
+
+    <div style="margin: 12px 0;">
+      <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+        <input type="checkbox" id="chkAgreePolicy" checked> I agree to Non-Disclosure of Raw Telemetry (Pre-Checked)
+      </label>
+      <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer; margin-top: 6px;">
+        <input type="checkbox" id="chkNotifyUpdates"> Receive mission downlink status notifications
+      </label>
+    </div>
+
+    <button class="btn" id="btnSaveRegistration" onclick="saveRegistration()">Submit Registration</button>
+    <div id="formSuccessMessage" class="status-box" style="display:none; color: #3fb950;">
+      ✓ Registration successfully verified and recorded.
+    </div>
+  </div>
+
+  <!-- PHASE 3: DYNAMIC STATE & MODAL AUTHORIZATION -->
+  <div class="card" id="phase3_dynamic">
+    <h2><span class="tag tag-orange">Phase 3</span> Dynamic Token Request & Modal Flow</h2>
+    <p style="font-size: 13px; color: #8b949e; margin-bottom: 12px;">Tests delayed AJAX rendering, modal dialog capture, and safe human confirmation.</p>
+    <button class="btn btn-secondary" id="btnRequestAuthToken" onclick="openAuthModal()">Request Telemetry Access Token</button>
+    <div id="tokenResult" class="status-box" style="display:none; margin-top: 12px;">
+      Token Status: <span id="tokenStatusText" style="color: var(--blue);">PENDING</span>
+    </div>
+  </div>
+</div>
+
+<!-- OFFSCREEN SCROLL TARGET SECTION -->
+<div style="height: 1200px; padding-top: 200px; text-align: center; color: #484f58;">
+  <p>--- Downlink Archive Records (Scroll Down to View) ---</p>
+</div>
+
+<div class="card" id="offscreenArchiveTarget" style="margin-bottom: 40px;">
+  <h2><span class="tag tag-blue">Deep Archive</span> Chandrayaan-3 Vikram Lander Thermal Telemetry</h2>
+  <p style="font-size: 13px; color: #8b949e; margin-bottom: 12px;">Offscreen target requiring target-aware scrolling.</p>
+  <button class="btn" id="btnDownloadArchiveData" onclick="downloadTelemetry()">Download Telemetry Data</button>
+  <div id="archiveDownloadMsg" class="status-box" style="display:none; color: #3fb950;">
+    ✓ Telemetry archive archive_ch3_v1.bin verified downloaded.
+  </div>
+</div>
+
+<!-- MODAL OVERLAY -->
+<div class="modal-overlay" id="authModalOverlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal">
+    <h2 id="modalTitle">Confirm Telemetry Access Authorization</h2>
+    <p style="font-size: 13px; color: #8b949e; margin: 12px 0;">This operation registers your digital signature for encrypted satellite downlink data access.</p>
+    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+      <button class="btn btn-secondary" id="btnCancelModal" onclick="closeAuthModal()">Cancel</button>
+      <button class="btn" id="btnAuthorizeModalConfirm" onclick="confirmAuthModal()">Authorize Access</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  function handleSearch() {
+    const val = document.getElementById("taskSearchInput").value;
+    if (val.trim().length > 0) {
+      document.getElementById("searchResults").style.display = "block";
+    }
+  }
+
+  function selectResult(title) {
+    alert("Navigated to: " + title);
+  }
+
+  function saveRegistration() {
+    document.getElementById("formSuccessMessage").style.display = "block";
+  }
+
+  function openAuthModal() {
+    document.getElementById("authModalOverlay").style.display = "flex";
+  }
+
+  function closeAuthModal() {
+    document.getElementById("authModalOverlay").style.display = "none";
+  }
+
+  function confirmAuthModal() {
+    document.getElementById("authModalOverlay").style.display = "none";
+    document.getElementById("tokenResult").style.display = "block";
+    document.getElementById("tokenStatusText").innerText = "AUTHORIZED (Token: ISRO-AUTH-9921)";
+  }
+
+  function downloadTelemetry() {
+    document.getElementById("archiveDownloadMsg").style.display = "block";
+  }
+</script>
+
+</body>
+</html>

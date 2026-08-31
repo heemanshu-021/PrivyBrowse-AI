@@ -174,8 +174,8 @@ class AgentPlanner:
                         return True, f"Search results for '{query_m}' verified on page"
 
         # Check authentication / login completion
-        if any(k in goal_lower for k in ["login", "sign in", "auth"]):
-            if any(w in page_text for w in ["welcome", "dashboard", "logout", "sign out", "profile"]):
+        if any(k in goal_lower for k in ["login", "sign in", "authenticate", "authorize"]):
+            if any(w in page_text for w in ["welcome", "dashboard", "logout", "sign out", "profile", "access granted", "authenticated", "authorized"]):
                 return True, "Authenticated session confirmed"
 
         # Check checkout completion

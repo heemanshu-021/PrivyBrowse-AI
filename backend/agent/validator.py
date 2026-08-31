@@ -52,7 +52,8 @@ class ActionValidator:
         history: List[Dict[str, Any]] = None,
         screen_width: int = 1920,
         screen_height: int = 1080,
-        current_url: str = ""
+        current_url: str = "",
+        require_target_match: bool = False
     ) -> ValidationResult:
         """
         Comprehensive pre-execution validation with security, link safety,
@@ -138,6 +139,12 @@ class ActionValidator:
         target_id = action_json.get("target_id") or action_json.get("element_id")
         if target_id and fused_elements:
             matched_el = next((e for e in fused_elements if e.get("id") == target_id), None)
+            if not matched_el and require_target_match:
+                return ValidationResult(
+                    allowed=False,
+                    reason=f"TARGET_NOT_FOUND: Element '{target_id}' does not exist in current perception elements",
+                    risk_level=RiskLevel.MEDIUM
+                )
             if matched_el:
                 # 5a. Deceptive UI Analysis
                 deceptive_res = DeceptiveUIGuard.analyze_element(matched_el, current_url=current_url)
@@ -171,7 +178,14 @@ class ActionValidator:
                                 details={"error_code": link_res.error_code, "target_url": link_res.target_url}
                             )
 
-                # 5c. Visibility Checks
+                # 5c. Visibility and Disabled Checks
+                if matched_el.get("disabled") or matched_el.get("aria_disabled"):
+                    return ValidationResult(
+                        allowed=False,
+                        reason=f"TARGET_IS_DISABLED: Action '{action_name}' cannot be performed on disabled element '{target_id}'",
+                        risk_level=RiskLevel.MEDIUM
+                    )
+
                 vis = str(matched_el.get("visibility", "VISIBLE")).upper()
                 if vis in ("HIDDEN", "INVISIBLE", "OCCLUDED") or matched_el.get("visible") is False:
                     return ValidationResult(
