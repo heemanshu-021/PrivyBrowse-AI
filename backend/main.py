@@ -256,6 +256,16 @@ def receive_browser_event(req: Dict[str, Any]):
         "active_tab_id": global_browser_context_manager.active_tab_id
     }
 
+@app.post("/api/browser/heartbeat")
+def receive_browser_heartbeat(req: Optional[Dict[str, Any]] = None):
+    browser_bridge.register_heartbeat()
+    return {
+        "success": True,
+        "connected": True,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "bridge_status": browser_bridge.get_status()
+    }
+
 @app.get("/api/browser/state")
 def get_browser_state():
     return {

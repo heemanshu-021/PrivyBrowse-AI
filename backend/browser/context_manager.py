@@ -464,6 +464,16 @@ class BrowserContextManager:
                 "last_update": curr.timestamp if curr else None
             }
 
+    def clear(self):
+        """Clears all stored contexts and resets active state."""
+        with self._lock:
+            self._active_tab_id = None
+            self._active_window_id = None
+            self._current_context = None
+            self._tab_contexts.clear()
+            self._context_history.clear()
+            self._last_update_time = 0.0
+
 
 # Singleton instance
 global_browser_context_manager = BrowserContextManager()

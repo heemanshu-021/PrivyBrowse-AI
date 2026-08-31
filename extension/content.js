@@ -1,6 +1,12 @@
 // PrivyBrowse AI - Content Script
 // Real DOM extraction, MutationObserver, SPA Navigation & Action Execution
 
+if (window.__PRIVYBROWSE_LOADED__) {
+  // Already initialized in this browsing context
+  console.debug("[PrivyBrowse Content] Content script already active in frame.");
+} else {
+window.__PRIVYBROWSE_LOADED__ = true;
+
 const SENSITIVE_PATTERNS = [
   /password/i,
   /passwd/i,
@@ -481,4 +487,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ success: true });
     return false;
   }
+
+  if (message.type === 'PING') {
+    sendResponse({ success: true, pong: true, timestamp: new Date().toISOString() });
+    return false;
+  }
 });
+} // End of window.__PRIVYBROWSE_LOADED__ block

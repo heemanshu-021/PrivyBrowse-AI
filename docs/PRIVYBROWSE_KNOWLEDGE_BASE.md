@@ -1306,10 +1306,36 @@ $$\text{Real Browser} \longleftrightarrow \text{Extension} \longleftrightarrow \
 
 ---
 
-## 25. Testing & Verification Suites
+## 25. Browser Extension Production Architecture
+
+The PrivyBrowse Chrome Extension (Manifest V3) acts as the secure, event-driven bridge between the physical Chrome browser and the local Python FastAPI backend daemon.
+
+### Key Production Subsystems:
+1. **Extension Connection State Machine (`extension/background.js`)**:
+   - Explicit finite state tracking: `INITIALIZING` $\to$ `READY` $\to$ `CONNECTING` $\to$ `CONNECTED` $\to$ `DISCONNECTED` $\to$ `RECONNECTING` $\to$ `DEGRADED` $\to$ `STOPPING` $\to$ `ERROR`.
+   - Persists session state to `chrome.storage.local` to safely survive service worker suspends and browser restarts.
+2. **Exponential Backoff Reconnection & Heartbeats**:
+   - Bounded exponential backoff progression ($500\text{ms} \to 750\text{ms} \to 1125\text{ms} \to \dots \to \text{max } 10000\text{ms}$) with circuit-breaker protection against rapid reconnect loops.
+   - Periodic $5000\text{ms}$ health heartbeats to `/api/browser/heartbeat`.
+3. **Action Command Pipeline, Deduplication & Stale Guards**:
+   - **Idempotency Deduplication Cache**: 60-second TTL action ID tracking preventing double execution of sensitive actions (e.g. payments, orders).
+   - **Stale Context Guard**: Verifies active `tab_id` and `expected_url` before executing any DOM action; prevents cross-tab action execution.
+   - **Execution Timeout Handling**: $5000\text{ms}$ timeout protection via `Promise.race()` to guarantee threads never hang indefinitely.
+   - **Full Acknowledgement Lifecycle**: Posts execution timestamp, DOM target, detail, and error codes back to `/api/action/ack`.
+4. **Content Script Lifecycle & Security Isolation (`extension/content.js`)**:
+   - Idempotency guard (`window.__PRIVYBROWSE_LOADED__`) prevents duplicate listener registration upon re-injection.
+   - Strict sender validation (`sender.id === chrome.runtime.id`) ensures webpages can never synthesize agent actions.
+   - Native input prototype setters triggering synthetic `input` and `change` events for React/Vue/Angular forms.
+5. **Permissions Scoped to Minimum**:
+   - Manifest permissions limited strictly to `activeTab`, `scripting`, `storage`, and `tabs`.
+   - Host permissions restricted to local backend `http://127.0.0.1:8000/*` and `http://localhost:8000/*`.
+
+---
+
+## 26. Testing & Verification Suites
 
 ```bash
-# All 21 Test Suites Passing (100% Pass Rate across 180+ tests):
+# All 23 Test Suites Passing (100% Pass Rate across 200+ tests):
 1.  python tests/verify_backend.py                         # Core FastAPI daemon sanity checks
 2.  python tests/test_agent.py                            # State machine, Candidate generator, Scoring
 3.  python tests/test_agent_closed_loop_real_browser.py   # Closed-loop planner on live browser pages
@@ -1318,19 +1344,21 @@ $$\text{Real Browser} \longleftrightarrow \text{Extension} \longleftrightarrow \
 6.  python tests/test_context_sync_real_browser.py        # Real browser tab switching & navigation sync
 7.  python tests/test_execution.py                        # Atomic browser actions & Page change signals
 8.  python tests/test_extension.py                        # Manifest V3 extension bridge & IPC
-9.  python tests/test_multistep_task.py                   # 23 multi-step task state & dependency tests
-10. python tests/test_multistep_real_browser.py           # 5 real multi-page task workflows
-11. python tests/test_perception.py                       # OpenCV detector, Tesseract OCR, Context fuser
-12. python tests/test_perception_real_browser.py          # Real DOM + visual perception benchmarks
-13. python tests/test_privacy.py                          # Indian PII rules, Visual redactor, Zero-leak gate
-14. python tests/test_privacy_real_browser.py             # Real privacy evaluation portals
-15. python tests/test_security_adversarial.py             # 15/15 Adversarial Attacks Blocked (100%)
-16. python tests/test_security_hardening.py               # Threat boundaries, DOM attribute sanitization
-17. python tests/test_security_real_browser.py            # Live prompt injection & phishing defense
-18. python tests/test_verification_recovery.py            # Evidence-based verification & bounded recovery
-19. python tests/test_verification_recovery_real_browser.py # Real browser action verification & stall recovery
-20. python tests/test_observability.py                    # 20 Event bus, Ring buffer, Sanitization & API tests
-21. python tests/test_observability_real_browser.py       # 5 Real browser event stream & monitoring scenarios
+9.  python tests/test_extension_lifecycle.py              # 24 Extension state machine, backoff, deduplication & timeout tests
+10. python tests/test_extension_real_browser.py           # 6 Real Chrome browser extension & disconnect recovery tests
+11. python tests/test_multistep_task.py                   # 23 multi-step task state & dependency tests
+12. python tests/test_multistep_real_browser.py           # 5 real multi-page task workflows
+13. python tests/test_perception.py                       # OpenCV detector, Tesseract OCR, Context fuser
+14. python tests/test_perception_real_browser.py          # Real DOM + visual perception benchmarks
+15. python tests/test_privacy.py                          # Indian PII rules, Visual redactor, Zero-leak gate
+16. python tests/test_privacy_real_browser.py             # Real privacy evaluation portals
+17. python tests/test_security_adversarial.py             # 15/15 Adversarial Attacks Blocked (100%)
+18. python tests/test_security_hardening.py               # Threat boundaries, DOM attribute sanitization
+19. python tests/test_security_real_browser.py            # Live prompt injection & phishing defense
+20. python tests/test_verification_recovery.py            # Evidence-based verification & bounded recovery
+21. python tests/test_verification_recovery_real_browser.py # Real browser action verification & stall recovery
+22. python tests/test_observability.py                    # 20 Event bus, Ring buffer, Sanitization & API tests
+23. python tests/test_observability_real_browser.py       # 5 Real browser event stream & monitoring scenarios
 ```
 
 ---
