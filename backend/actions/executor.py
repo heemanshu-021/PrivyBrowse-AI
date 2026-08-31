@@ -104,7 +104,9 @@ class ActionExecutor:
             action_json=action_json,
             fused_elements=current_elements or [],
             screen_width=self.config.screen_width,
-            screen_height=self.config.screen_height
+            screen_height=self.config.screen_height,
+            current_url=current_url,
+            trusted_user_confirmed=user_confirmed
         )
 
         if not v_res.allowed:

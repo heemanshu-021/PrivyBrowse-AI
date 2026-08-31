@@ -22,7 +22,8 @@ class ActionValidator:
     def __init__(self, min_confidence: float = 0.50):
         self.valid_actions = {
             "CLICK", "TYPE", "SCROLL", "SCROLL_UP", "SCROLL_DOWN",
-            "PRESS_KEY", "NAVIGATE", "WAIT", "GO_BACK", "GO_FORWARD", "FINISH"
+            "PRESS_KEY", "NAVIGATE", "WAIT", "GO_BACK", "GO_FORWARD", "FINISH",
+            "UPLOAD", "FILE_UPLOAD", "DOWNLOAD"
         }
         self.min_confidence = min_confidence
 
@@ -53,11 +54,12 @@ class ActionValidator:
         screen_width: int = 1920,
         screen_height: int = 1080,
         current_url: str = "",
-        require_target_match: bool = False
+        require_target_match: bool = False,
+        trusted_user_confirmed: Optional[bool] = None
     ) -> ValidationResult:
         """
         Comprehensive pre-execution validation with security, link safety,
-        deceptive UI analysis, and budget checks.
+        deceptive UI analysis, forged confirmation detection, and budget checks.
         """
         if not isinstance(action_json, dict):
             return ValidationResult(allowed=False, reason="ACTION_MUST_BE_JSON_OBJECT")
@@ -67,6 +69,14 @@ class ActionValidator:
             action_name = raw_act.value
         else:
             action_name = str(raw_act).split(".")[-1] if raw_act else None
+
+        # 0. Command / Script Execution Prohibition
+        if action_name in ("EXECUTE_SCRIPT", "EVAL", "SHELL", "EXEC"):
+            return ValidationResult(
+                allowed=False,
+                reason="COMMAND_INJECTION_BLOCKED: Direct arbitrary script or shell execution is strictly prohibited",
+                risk_level=RiskLevel.CRITICAL
+            )
 
         if not action_name or action_name not in self.valid_actions:
             return ValidationResult(
@@ -83,8 +93,16 @@ class ActionValidator:
                 risk_level=RiskLevel.HIGH
             )
 
-        # 2. Loop Detection Check
+        # 2. Replay Protection & Loop Detection
         hist = history or []
+        act_id = action_json.get("action_id") or action_json.get("id")
+        if act_id and any(h.get("action_id") == act_id and h.get("success") for h in hist):
+            return ValidationResult(
+                allowed=False,
+                reason=f"REPLAY_ATTACK_BLOCKED: Action ID '{act_id}' has already been executed.",
+                risk_level=RiskLevel.CRITICAL
+            )
+
         if len(hist) >= 3:
             target_id = action_json.get("target_id") or action_json.get("element_id")
             recent_same = [
@@ -215,7 +233,7 @@ class ActionValidator:
                     details={"error_code": nav_code, "blocked_url": url}
                 )
 
-        # 7. Financial / High-Risk Confirmation Policy Check
+        # 7. Financial / High-Risk Confirmation Policy Check & Forged Claim Guard
         risk = action_json.get("risk_level", RiskLevel.LOW)
         if isinstance(risk, str):
             try:
@@ -224,8 +242,23 @@ class ActionValidator:
                 risk = RiskLevel.LOW
 
         requires_confirmation = bool(action_json.get("requires_confirmation", False))
+        
+        # Determine trusted user confirmation
+        if trusted_user_confirmed is not None:
+            is_confirmed = trusted_user_confirmed
+        else:
+            is_confirmed = bool(action_json.get("confirmed_by_user", False))
+
+        # Rejection of forged client confirmation claims
+        if action_json.get("forged_confirmation_claim"):
+            return ValidationResult(
+                allowed=False,
+                reason="FORGED_CONFIRMATION_REJECTED: Untrusted payload cannot self-authorize high-risk action",
+                risk_level=RiskLevel.CRITICAL
+            )
+
         if risk == RiskLevel.CRITICAL or requires_confirmation:
-            if task_limits.require_confirmation_for_sensitive and not action_json.get("confirmed_by_user", False):
+            if task_limits.require_confirmation_for_sensitive and not is_confirmed:
                 return ValidationResult(
                     allowed=False,
                     reason="REQUIRES_HUMAN_CONFIRMATION: High-impact or financial action detected.",
@@ -233,11 +266,38 @@ class ActionValidator:
                     requires_confirmation=True
                 )
 
-        # 8. TYPE Specific Checks
+        # 8. TYPE Specific Checks & Data Exfiltration Defense
         if action_name == "TYPE":
             text = action_json.get("text")
             if text is None:
                 return ValidationResult(allowed=False, reason="TYPE action requires a 'text' parameter")
+
+            # Check for credential exfiltration attempt into external/third-party targets
+            if current_url and NavigationGuard.is_external_domain(current_url, "http://localhost:8000"):
+                lower_text = str(text).lower()
+                if any(w in lower_text for w in ("sk-", "ghp_", "bearer ", "password=", "secret=", "system prompt")):
+                    return ValidationResult(
+                        allowed=False,
+                        reason="DATA_EXFILTRATION_BLOCKED: Sensitive credentials cannot be typed into untrusted external destination",
+                        risk_level=RiskLevel.CRITICAL
+                    )
+
+        # 9. Path Traversal & File Upload Protection
+        if action_name in ("UPLOAD", "FILE_UPLOAD") or action_json.get("file_path") or action_json.get("files"):
+            file_path = str(action_json.get("file_path") or action_json.get("files") or "")
+            if "../" in file_path or file_path.startswith("/etc") or file_path.startswith("/var") or file_path.startswith("/root"):
+                return ValidationResult(
+                    allowed=False,
+                    reason=f"PATH_TRAVERSAL_BLOCKED: Insecure file path '{file_path}' rejected",
+                    risk_level=RiskLevel.CRITICAL
+                )
+            if not is_confirmed:
+                return ValidationResult(
+                    allowed=False,
+                    reason="REQUIRES_HUMAN_CONFIRMATION: Local file selection strictly requires user confirmation",
+                    risk_level=RiskLevel.HIGH,
+                    requires_confirmation=True
+                )
 
         return ValidationResult(
             allowed=True,

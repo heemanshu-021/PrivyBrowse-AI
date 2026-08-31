@@ -271,7 +271,9 @@ class AgentPlanner:
             fused_elements=sanitized_elements,
             constraints=task.constraints,
             actions_executed_so_far=task.actions_executed,
-            history=hist
+            history=hist,
+            current_url=current_url,
+            trusted_user_confirmed=user_confirmed
         )
 
         t_val_ms = (time.perf_counter() - t_val_start) * 1000.0

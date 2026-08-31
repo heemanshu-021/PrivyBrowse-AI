@@ -39,8 +39,24 @@ class AgentMemory:
         if len(self.recent_actions) > self.max_history:
             self.recent_actions.pop(0)
 
+    def _scrub_pii_recursive(self, val: Any) -> Any:
+        import re
+        if isinstance(val, str):
+            val = re.sub(r"\b(?:\d{4}\s?){2}\d{4}\b", "[REDACTED_AADHAAR]", val)
+            val = re.sub(r"\b(?:\d{4}[-\s]?){3}\d{4}\b", "[REDACTED_CARD]", val)
+            val = re.sub(r"\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b", "[REDACTED_PAN]", val)
+            val = re.sub(r"sk-(?:proj-)?[a-zA-Z0-9_\-]{12,}", "[REDACTED_API_KEY]", val)
+            return val
+        elif isinstance(val, dict):
+            return {k: self._scrub_pii_recursive(v) for k, v in val.items()}
+        elif isinstance(val, (list, tuple)):
+            return [self._scrub_pii_recursive(item) for item in val]
+        return val
+
     def record_action_audit(self, record: ActionRecord):
-        """Stores structured immutable action audit record."""
+        """Stores structured immutable action audit record with PII scrubbing."""
+        if record.result:
+            record.result = self._scrub_pii_recursive(record.result)
         self.action_records.append(record)
         if len(self.action_records) > self.max_history:
             self.action_records.pop(0)

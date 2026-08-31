@@ -1757,4 +1757,67 @@ PrivyBrowse AI features a hardened, deterministic, production-grade task executi
 * `cancel_task()` halts execution, releases locks, and transitions state to `CANCELLED`.
 
 ---
+
+## 28. Production Security & Trust Model
+
+PrivyBrowse AI enforces a strict, fail-closed trust and security model where the webpage is fundamentally treated as an **UNTRUSTED INPUT SOURCE**.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    TRUSTED BOUNDARY                         │
+│  User Task & Goals | Application Policy | System Validator  │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ (Supervised Reasoning)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   UNTRUSTED BOUNDARY                        │
+│  DOM Text | OCR Text | aria-labels | Links | Hidden CSS     │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ (InjectionGuard Neutralization)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│               ACTION AUTHORIZATION GATEWAY                  │
+│  Fail-Closed Validation | SSRF Protection | Replay Defense  │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ (Authorized Action)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 BROWSER ACTION EXECUTION                    │
+│    Real Browser Bridge | Context Freshness Verification     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 1. Data Provenance & Trust Classification (`backend/security/schemas.py`)
+* **`TrustLevel.TRUSTED`**: User task intent, application security policies, system configuration, server-validated human confirmations.
+* **`TrustLevel.UNTRUSTED`**: Webpage text, DOM nodes, OCR visual text, HTML attributes (`aria-label`, `alt`, `title`, `placeholder`), comments, ads, search results, downloaded content.
+* **Prohibition of Implicit Authority**: Untrusted webpage text cannot alter the user goal, adjust security policies, skip validation gates, or self-authorize actions.
+
+### 2. Comprehensive Prompt Injection Defense (`backend/security/injection_guard.py`)
+* **Direct Jailbreak & Override Defense**: Neutralizes system instruction overrides, safety policy overrides, system prompt leakage directives, roleplay jailbreaks (DAN), and arbitrary execution commands.
+* **Indirect Prompt Injection Defense**: Neutralizes instructions embedded in user reviews, comments, and third-party content.
+* **DOM Attribute Inspection**: Recursively scans visible text, `label`, `aria-label`, `aria-description`, `alt`, `title`, `placeholder`, `value`, and `data-*` attributes.
+* **Hidden CSS Directive Detection**: Scans for directives embedded in CSS-hidden elements (`display: none`, `visibility: hidden`, `opacity: 0`, `font-size: 0`, offscreen coordinates) and tags them as `is_hidden_injection`.
+* **OCR-Detected Adversarial Neutralization**: Normalizes and sanitizes OCR text blocks before reasoning.
+* **Obfuscation Normalization**: Multi-stage normalizer unescapes HTML entities, strips tags, applies Unicode NFKD normalization, and collapses spaced characters (`i g n o r e` $\to$ `ignore`).
+
+### 3. Action Authorization & Anti-Spoofing Gates (`backend/agent/validator.py`)
+* **Strict Planner/Validator Separation**: The planner only proposes candidate actions; `ActionValidator` independently validates and authorizes.
+* **Forged Confirmation Protection**: Rejects client payloads attempting to spoof `"confirmed_by_user": True` or `"validated": True` unless originating from verified server-side human confirmation.
+* **Sensitive Action Protection**: Financial interactions, deletions, credential submissions, and destructive actions strictly demand human confirmation.
+* **Replay Protection**: Tracks executed `action_id` nonces to block replay attacks.
+* **Data Exfiltration Defense**: Intercepts `TYPE` actions attempting to type credentials or sensitive tokens into untrusted third-party domains.
+* **Path Traversal & Script Blocking**: Rejects directory traversal (`../`) and blocks arbitrary script/command execution directives fail-closed.
+
+### 4. Navigation & Network Security (`backend/security/navigation_guard.py`)
+* **Malicious Scheme Blocking**: Blocks `javascript:`, `data:`, `vbscript:`, `file:`, `blob:`, `about:`, `chrome:`.
+* **SSRF & Cloud Metadata Protection**: Blocks navigation to loopback (`127.0.0.1`, `localhost`), private RFC1918 subnets, and cloud metadata endpoints (`169.254.169.254`, `metadata.google.internal`).
+* **Open Redirect Protection**: Detects open redirect query parameters targeting external destinations.
+* **Dangerous Binary Download Protection**: Blocks direct navigation to executable or script files (`.exe`, `.sh`, `.bat`, `.apk`, `.dmg`, `.msi`).
+
+### 5. Extension & Protocol Defense (`backend/actions/browser_bridge.py`)
+* **Oversized Message Protection**: Rejects payloads exceeding 10MB to prevent memory exhaustion DoS.
+* **Context Freshness Verification**: Validates tab ID, document ID, URL, and DOM fingerprint before dispatching actions.
+* **Zero Secret/PII Leakage**: Memory and event bus automatically scrub credentials, passwords, Aadhaar, PAN, and card numbers.
+
+---
 *End of PrivyBrowse AI Knowledge Base Document.*

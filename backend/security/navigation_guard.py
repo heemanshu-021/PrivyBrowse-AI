@@ -16,8 +16,8 @@ class NavigationGuard:
     """
 
     ALLOWED_SCHEMES = {"http", "https", ""}
-    BLOCKED_SCHEMES = {"javascript", "data", "vbscript", "file", "blob", "about"}
-    DANGEROUS_EXTENSIONS = {".exe", ".sh", ".bat", ".cmd", ".msi", ".apk", ".dmg", ".pkg", ".vbs", ".scr", ".ps1", ".jar", ".app"}
+    BLOCKED_SCHEMES = {"javascript", "data", "vbscript", "file", "blob", "about", "chrome", "edge"}
+    DANGEROUS_EXTENSIONS = {".exe", ".sh", ".bat", ".cmd", ".msi", ".apk", ".dmg", ".pkg", ".vbs", ".scr", ".ps1", ".jar", ".app", ".dll"}
 
     KNOWN_OFFICIAL_KEYWORDS = {
         "isro": ["isro.gov.in", "isro.gov", "mosdac.gov.in"],
@@ -29,9 +29,31 @@ class NavigationGuard:
     }
 
     @classmethod
-    def validate_url(cls, target_url: str, current_url: str = "") -> Tuple[bool, str, Optional[str]]:
+    def is_ssrf_destination(cls, netloc: str) -> Tuple[bool, str]:
+        """Checks if host netloc is loopback, RFC1918 private network, or cloud metadata endpoint."""
+        import ipaddress
+        host = netloc.split(":")[0].strip("[]").lower()
+        if not host:
+            return False, ""
+        if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1", "metadata.google.internal"):
+            return True, f"Blocked loopback/localhost host '{host}'"
+        if host == "169.254.169.254" or host.startswith("169.254."):
+            return True, "Blocked cloud metadata endpoint (169.254.169.254)"
+
+        try:
+            ip = ipaddress.ip_address(host)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                return True, f"Blocked private/internal IP address '{host}'"
+        except ValueError:
+            pass
+
+        return False, ""
+
+    @classmethod
+    def validate_url(cls, target_url: str, current_url: str = "", allow_localhost: bool = True) -> Tuple[bool, str, Optional[str]]:
         """
-        Validates target URL. Returns (is_safe, error_code, error_message).
+        Validates target URL against malicious schemes, SSRF targets, open redirects, and executable downloads.
+        Returns (is_safe, error_code, error_message).
         """
         if not target_url or not isinstance(target_url, str):
             return False, "EMPTY_URL", "Target URL is empty or invalid"
@@ -50,6 +72,8 @@ class NavigationGuard:
             return False, "UNSAFE_URL_SCHEME", "Blocked local filesystem 'file:' URI scheme"
         if lower_url.startswith("blob:"):
             return False, "UNSAFE_URL_SCHEME", "Blocked 'blob:' URI scheme"
+        if lower_url.startswith("chrome:") or lower_url.startswith("about:"):
+            return False, "UNSAFE_URL_SCHEME", "Blocked internal browser scheme"
 
         parsed = urlparse(url_clean)
         scheme = parsed.scheme.lower()
@@ -57,13 +81,22 @@ class NavigationGuard:
         if scheme and scheme not in cls.ALLOWED_SCHEMES:
             return False, "UNSUPPORTED_SCHEME", f"Protocol '{scheme}' is not permitted"
 
-        # 2. Check protocol downgrade (e.g. https:// -> http://)
+        # 2. SSRF checks (enforced when current_url is external or allow_localhost is False)
+        if parsed.netloc:
+            is_ssrf, ssrf_msg = cls.is_ssrf_destination(parsed.netloc)
+            if is_ssrf:
+                # If current_url is external (not localhost), strictly block SSRF to internal targets
+                curr_netloc = urlparse(current_url).netloc.lower() if current_url else ""
+                if not allow_localhost or (curr_netloc and "localhost" not in curr_netloc and "127.0.0.1" not in curr_netloc):
+                    return False, "SSRF_BLOCKED", ssrf_msg
+
+        # 3. Check protocol downgrade (e.g. https:// -> http://)
         if current_url:
             curr_parsed = urlparse(current_url)
             if curr_parsed.scheme == "https" and scheme == "http" and parsed.netloc == curr_parsed.netloc:
                 return False, "PROTOCOL_DOWNGRADE", f"Blocked insecure HTTP downgrade on domain '{parsed.netloc}'"
 
-        # 3. Check executable download attempts
+        # 4. Check executable download attempts
         path = parsed.path.lower()
         for ext in cls.DANGEROUS_EXTENSIONS:
             if path.endswith(ext):

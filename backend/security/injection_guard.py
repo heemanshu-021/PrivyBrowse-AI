@@ -22,24 +22,28 @@ class InjectionGuard:
     def __init__(self):
         # 1. Direct Jailbreak and Instruction Override Patterns
         self.jailbreak_patterns = [
-            (re.compile(r"(?i)\bignore\s+(?:all\s+)?(?:previous|prior|system|earlier)\s+(?:instructions|prompts|rules|commands)\b"), "SYSTEM_INSTRUCTION_OVERRIDE"),
+            (re.compile(r"(?i)\bignore\s+(?:all\s+)?(?:previous|prior|system|earlier)\s+(?:instructions|prompts|rules|commands|directives)\b"), "SYSTEM_INSTRUCTION_OVERRIDE"),
             (re.compile(r"(?i)\bdisregard\s+(?:all\s+)?(?:previous|prior|safety|security)\s+(?:rules|policies|instructions|directives)\b"), "SAFETY_POLICY_OVERRIDE"),
             (re.compile(r"(?i)\bforget\s+(?:your\s+)?(?:previous|current|active)\s+(?:task|goal|instructions|context)\b"), "TASK_FORGET_OVERRIDE"),
-            (re.compile(r"(?i)\b(?:reveal|print|output|display|show|leak)\s+(?:your\s+)?(?:system|hidden|internal|developer)\s+(?:prompt|instructions|message)\b"), "SYSTEM_PROMPT_LEAK"),
-            (re.compile(r"(?i)\b(?:send|upload|exfiltrate|transmit|post|forward)\s+(?:all\s+)?(?:data|credentials|passwords|tokens|cookies|keys|secrets|api\s*key)\s+(?:to|towards)\b"), "DATA_EXFILTRATION_COMMAND"),
+            (re.compile(r"(?i)\b(?:reveal|print|output|display|show|leak|dump)\s+(?:your\s+)?(?:system|hidden|internal|developer|initial|base)\s+(?:prompt|instructions|message)\b"), "SYSTEM_PROMPT_LEAK"),
+            (re.compile(r"(?i)\b(?:send|upload|exfiltrate|transmit|post|forward|copy)\s+(?:all\s+)?(?:data|credentials|passwords?|tokens?|cookies?|keys?|secrets?|api\s*keys?)\s+(?:to|towards|into)\b"), "DATA_EXFILTRATION_COMMAND"),
             (re.compile(r"(?i)\b(?:disable|bypass|deactivate|turn\s*off|override|skip)\s+(?:security|privacy|confirmation|safety|gate|validation|checks?)\b"), "SECURITY_BYPASS_ATTEMPT"),
             (re.compile(r"(?i)\b(?:you\s+are\s+now|act\s+as|switch\s+to)\s+(?:DAN|jailbroken|unrestricted|godmode|developer\s+mode|maintenance\s+mode)\b"), "ROLEPLAY_JAILBREAK"),
             (re.compile(r"(?i)\b(?:eval|exec|new\s+Function|javascript:)\s*\(.*\)"), "CODE_INJECTION_DIRECTIVE"),
-            (re.compile(r"(?i)\b(?:ADMIN|SYSTEM|ROOT|DEVELOPER|OPERATOR|AI\s*AGENT|AGENT)\s*(?:MESSAGE|COMMAND|OVERRIDE|DIRECTIVE)?\s*:\s*(?:click|type|buy|order|delete|transfer|upload|send|ignore|download)\b"), "SPOOFED_SYSTEM_COMMAND"),
+            (re.compile(r"(?i)\b(?:ignore|disregard|forget)\s+(?:user|human|operator|task)\b"), "IGNORE_USER_OVERRIDE"),
+            (re.compile(r"(?i)\b(?:ADMIN|SYSTEM|ROOT|DEVELOPER|OPERATOR|AI\s*AGENT|AGENT|USER)\s*(?:MESSAGE|COMMAND|OVERRIDE|DIRECTIVE)?\s*:\s*(?:click|type|buy|order|delete|transfer|upload|send|ignore|download)\b"), "SPOOFED_SYSTEM_COMMAND"),
             (re.compile(r"(?i)\b(?:secret|internal|confidential|privileged)\s+instruction\s*:\s*"), "SPOOFED_CONFIDENTIAL_INSTRUCTION"),
-            (re.compile(r"(?i)\b(?:execute|run)\s+(?:this\s+)?(?:command|script|shell|code)\s*:\s*"), "ARBITRARY_EXECUTION_DIRECTIVE")
+            (re.compile(r"(?i)\b(?:execute|run)\s+(?:this\s+)?(?:command|script|shell|code|terminal|powershell|bash)\s*:\s*"), "ARBITRARY_EXECUTION_DIRECTIVE"),
+            (re.compile(r"(?i)\b(?:click|press|tap)\s+(?:this\s+)?(?:instead|button|link|here)\s+(?:and\s+ignore|to\s+bypass|to\s+skip)\b"), "CLICK_REDIRECT_OVERRIDE"),
+            (re.compile(r"(?i)\b(?:install|download)\s+(?:this\s+)?(?:extension|executable|binary|payload|malware)\b"), "MALICIOUS_DOWNLOAD_DIRECTIVE")
         ]
 
         # 2. Indirect Prompt Injection & Manipulation Patterns
         self.indirect_patterns = [
             (re.compile(r"(?i)\b(?:to\s+continue|to\s+proceed|verification\s+required)\s*[,:]?\s*(?:upload|submit|enter|send|paste)\s+(?:your\s+)?(?:credentials|password|api\s*key|access\s*token)\b"), "INDIRECT_CREDENTIAL_HARVEST"),
             (re.compile(r"(?i)\b(?:ai\s*agent|browser\s*agent|assistant|model|privybrowse)\s*(?:command|message|directive|override)?\s*[,:]?\s*(?:ignore|click|download|execute|transfer|delete|navigate)\b"), "DIRECTED_AGENT_MANIPULATION"),
-            (re.compile(r"(?i)\bclick\s+(?:pay|purchase|buy|confirm|transfer)\s+(?:immediately|now|directly)\s+(?:without\s+(?:asking|confirmation)|skip\s+confirm)\b"), "UNATTENDED_PAYMENT_MANIPULATION")
+            (re.compile(r"(?i)\bclick\s+(?:pay|purchase|buy|confirm|transfer)\s+(?:immediately|now|directly)\s+(?:without\s+(?:asking|confirmation)|skip\s+confirm)\b"), "UNATTENDED_PAYMENT_MANIPULATION"),
+            (re.compile(r"(?i)\b(?:copy|steal|extract)\s+(?:the\s+)?(?:user's\s+)?(?:secret|password|token|key)\b"), "INDIRECT_SECRET_THEFT")
         ]
 
         # 3. Suspicious Phrasing Patterns
@@ -47,7 +51,8 @@ class InjectionGuard:
             (re.compile(r"(?i)\b(?:do\s+not\s+ask|skip|bypass)\s+confirmation\b"), "SKIP_CONFIRMATION_ATTEMPT"),
             (re.compile(r"(?i)\b(?:urgent|emergency|critical)\s*:\s*(?:transfer|authorize|send|wire)\b"), "URGENCY_MANIPULATION"),
             (re.compile(r"(?i)\b(?:fake|simulated|mock)\s+confirmation\s+dialog\b"), "CONFIRMATION_SPOOFING"),
-            (re.compile(r"(?i)\b(?:system|developer|maintenance)\s+message\s*:\s*"), "SYSTEM_MESSAGE_SPOOFING")
+            (re.compile(r"(?i)\b(?:system|developer|maintenance)\s+message\s*:\s*"), "SYSTEM_MESSAGE_SPOOFING"),
+            (re.compile(r"(?i)\b(?:upload\s+(?:all\s+)?local\s+files)\b"), "UNSAFE_FILE_UPLOAD_REQUEST")
         ]
 
     def normalize_text(self, text: str) -> str:
@@ -173,10 +178,14 @@ class InjectionGuard:
             context_intent="ADVERSARIAL_OVERRIDE" if has_inj else None
         )
 
+    def scan_ocr_text(self, ocr_text: str) -> PromptInjectionScanResult:
+        """Explicitly scans untrusted text extracted via OCR image processing."""
+        return self.scan_text(ocr_text)
+
     def sanitize_untrusted_elements(self, elements: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
-        Scans all text in DOM/OCR layout elements, neutralizing prompt injections,
-        tagging threat levels, and explicitly setting trust_level='UNTRUSTED'.
+        Deeply scans all text and attributes in DOM/OCR layout elements, neutralizing prompt injections,
+        detecting hidden adversarial content, tagging threat levels, and enforcing trust_level='UNTRUSTED'.
         Returns (sanitized_elements, security_findings).
         """
         sanitized_elements = []
@@ -184,24 +193,86 @@ class InjectionGuard:
 
         for el in elements:
             el_copy = dict(el)
-            raw_text = el.get("text", "") or el.get("label", "") or ""
-            res = self.scan_text(raw_text)
+            
+            # Aggregate all visible and attribute text sources
+            text_fields = [
+                ("text", el.get("text", "") or ""),
+                ("label", el.get("label", "") or ""),
+                ("aria_label", el.get("aria_label") or el.get("aria-label") or ""),
+                ("aria_description", el.get("aria_description") or el.get("aria-description") or ""),
+                ("placeholder", el.get("placeholder", "") or ""),
+                ("title", el.get("title", "") or ""),
+                ("alt", el.get("alt", "") or ""),
+                ("value", el.get("value", "") or "")
+            ]
+
+            # Also check attributes dictionary
+            attrs = el.get("attributes", {})
+            if isinstance(attrs, dict):
+                for k, v in attrs.items():
+                    if isinstance(v, str) and v.strip():
+                        text_fields.append((f"attr_{k}", v))
+
+            # Detect Hidden CSS or Offscreen status
+            is_hidden = False
+            vis = str(el.get("visibility", "VISIBLE")).upper()
+            if vis in ("HIDDEN", "INVISIBLE", "OCCLUDED", "OFFSCREEN") or el.get("visible") is False:
+                is_hidden = True
+            
+            bbox = el.get("bbox") or el.get("boundingBox") or []
+            if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+                # [x1, y1, x2, y2] or [x, y, w, h]
+                y_coord = bbox[1]
+                x_coord = bbox[0]
+                if y_coord < -200 or y_coord > 10000 or x_coord < -200:
+                    is_hidden = True
 
             # Explicitly mark data provenance as UNTRUSTED layout data
             el_copy["trust_level"] = TrustLevel.UNTRUSTED.value
             el_copy["is_untrusted_data"] = True
 
-            if res.has_injection:
-                el_copy["text"] = res.sanitized_text
-                el_copy["threat_level"] = res.threat_level.value
+            has_el_injection = False
+            highest_threat = ThreatLevel.NORMAL
+            el_matches = []
+
+            for field_name, raw_val in text_fields:
+                if not raw_val or not isinstance(raw_val, str):
+                    continue
+                scan_res = self.scan_text(raw_val)
+                if scan_res.has_injection:
+                    has_el_injection = True
+                    el_matches.extend(scan_res.matched_patterns)
+                    if scan_res.threat_level == ThreatLevel.HIGH_RISK or highest_threat != ThreatLevel.HIGH_RISK:
+                        highest_threat = scan_res.threat_level
+
+                    # Sanitize the specific field
+                    if field_name == "text":
+                        el_copy["text"] = scan_res.sanitized_text
+                    elif field_name == "label":
+                        el_copy["label"] = scan_res.sanitized_text
+                    elif field_name in ("aria_label", "aria-label"):
+                        el_copy["aria_label"] = scan_res.sanitized_text
+                        el_copy["aria-label"] = scan_res.sanitized_text
+                    elif field_name == "placeholder":
+                        el_copy["placeholder"] = scan_res.sanitized_text
+                    elif field_name == "title":
+                        el_copy["title"] = scan_res.sanitized_text
+                    elif field_name == "alt":
+                        el_copy["alt"] = scan_res.sanitized_text
+
+            if has_el_injection:
+                el_copy["threat_level"] = highest_threat.value
                 el_copy["adversarial_injection_detected"] = True
-                el_copy["injection_patterns"] = res.matched_patterns
+                el_copy["injection_patterns"] = list(set(el_matches))
+                if is_hidden:
+                    el_copy["is_hidden_injection"] = True
+
                 security_findings.append({
                     "element_id": el.get("id"),
-                    "threat_level": res.threat_level.value,
-                    "matched_patterns": res.matched_patterns,
-                    "is_indirect": res.is_indirect,
-                    "original_text_preview": raw_text[:80]
+                    "threat_level": highest_threat.value,
+                    "matched_patterns": list(set(el_matches)),
+                    "is_hidden": is_hidden,
+                    "original_text_preview": (el.get("text") or el.get("label") or "")[:80]
                 })
             else:
                 el_copy["threat_level"] = ThreatLevel.NORMAL.value

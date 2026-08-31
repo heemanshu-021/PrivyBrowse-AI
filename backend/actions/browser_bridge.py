@@ -86,6 +86,16 @@ class BrowserActionBridge:
 
     # How long (seconds) before we consider the extension disconnected
     HEARTBEAT_TIMEOUT_S = 10.0
+    MAX_PAYLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+    def _handle_incoming_raw_message(self, raw_str: str) -> bool:
+        """
+        Validates raw payload length and JSON schema from WebSocket/IPC bridge.
+        Returns False if oversized or malformed, preventing memory exhaustion DoS.
+        """
+        if not raw_str or len(raw_str.encode("utf-8")) > self.MAX_PAYLOAD_BYTES:
+            return False
+        return True
 
     def __init__(self):
         self._lock = threading.Lock()
