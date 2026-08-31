@@ -26,17 +26,39 @@ class IoUMatcher:
         For each element in `primary`, find the best-matching element in `secondary`.
         Returns list of (primary_idx, secondary_idx_or_None, iou_score).
         """
+        if not primary:
+            return []
+        if not secondary:
+            return [(i, None, 0.0) for i in range(len(primary))]
+
         used_secondary = set()
         matches: List[Tuple[int, Optional[int], float]] = []
+
+        # Precompute secondary bounding box coordinates for fast AABB reject
+        sec_coords = [
+            (
+                s_elem.bbox.x,
+                s_elem.bbox.y,
+                s_elem.bbox.x + s_elem.bbox.width,
+                s_elem.bbox.y + s_elem.bbox.height,
+                s_elem.bbox
+            )
+            for s_elem in secondary
+        ]
 
         for i, p_elem in enumerate(primary):
             best_idx = None
             best_iou = 0.0
+            px1, py1 = p_elem.bbox.x, p_elem.bbox.y
+            px2, py2 = px1 + p_elem.bbox.width, py1 + p_elem.bbox.height
 
-            for j, s_elem in enumerate(secondary):
+            for j, (sx1, sy1, sx2, sy2, s_bbox) in enumerate(sec_coords):
                 if j in used_secondary:
                     continue
-                iou = calculate_iou(p_elem.bbox, s_elem.bbox)
+                # Fast AABB disjoint rejection
+                if px2 <= sx1 or sx2 <= px1 or py2 <= sy1 or sy2 <= py1:
+                    continue
+                iou = calculate_iou(p_elem.bbox, s_bbox)
                 if iou >= self.iou_threshold and iou > best_iou:
                     best_iou = iou
                     best_idx = j

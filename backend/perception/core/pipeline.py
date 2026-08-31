@@ -29,6 +29,9 @@ from backend.perception.fusion.context_fuser import ContextFuser
 from backend.observability.publisher import global_event_publisher
 
 
+import hashlib
+from collections import OrderedDict
+
 class PerceptionPipeline:
     """
     Modular on-device visual perception pipeline.
@@ -51,6 +54,17 @@ class PerceptionPipeline:
         self.dom_detector = DOMDetector()
         self.text_detector = TextDetector()
         self.fuser = ContextFuser(iou_threshold=0.35)
+        self._last_perception_key: str = ""
+        self._last_result: Optional[PerceptionResult] = None
+
+    def invalidate_cache(self):
+        """Explicitly flushes all perception, OCR, and visual detector caches."""
+        self._last_perception_key = ""
+        self._last_result = None
+        if hasattr(self.ocr_engine, "clear_cache"):
+            self.ocr_engine.clear_cache()
+        if hasattr(self.visual_detector, "clear_cache"):
+            self.visual_detector.clear_cache()
 
     def get_status(self) -> Dict[str, Any]:
         """Return engine readiness status."""
@@ -83,25 +97,26 @@ class PerceptionPipeline:
         document_height: float = 0.0,
     ) -> PerceptionResult:
         """
-        Run the complete perception pipeline.
-
-        Args:
-            screenshot_b64: Base64-encoded screenshot (data URL or raw base64)
-            screenshot_bytes: Raw screenshot bytes (alternative to b64)
-            viewport_width: Browser viewport width in CSS pixels
-            viewport_height: Browser viewport height in CSS pixels
-            device_pixel_ratio: Device pixel ratio
-            dom_nodes: List of DOM node dicts from the browser extension
-            page_metadata: Page info (url, title, hostname)
-            scroll_x, scroll_y: Current scroll position
-            document_width, document_height: Full document dimensions
-
-        Returns:
-            PerceptionResult with all fused elements and metadata.
+        Run the complete perception pipeline with hash-based memoization.
         """
         latency = PerceptionLatency()
         warnings: List[str] = []
         t_total_start = time.perf_counter()
+
+        # Fast Hash Memoization Check
+        url_part = (page_metadata or {}).get("url", "")
+        dom_count = len(dom_nodes or [])
+        cache_key = f"{url_part}|{dom_count}|{scroll_x}:{scroll_y}|{viewport_width}:{viewport_height}"
+        if screenshot_b64:
+            cache_key += f"|{len(screenshot_b64)}:{screenshot_b64[:32]}:{screenshot_b64[-32:]}"
+        elif screenshot_bytes:
+            cache_key += f"|{len(screenshot_bytes)}:{hashlib.md5(screenshot_bytes[:4096]).hexdigest()}"
+
+        if self._last_result and self._last_perception_key == cache_key and self._last_result.success:
+            cached_res = self._last_result.model_copy(deep=True)
+            cached_res.timestamp = datetime.now(timezone.utc).isoformat()
+            cached_res.latency.total_ms = 0.05
+            return cached_res
 
         # === STAGE 0: Decode screenshot ===
         if screenshot_bytes is None and screenshot_b64:
@@ -253,7 +268,12 @@ class PerceptionPipeline:
             cv_count=len(vision_elements)
         )
 
-        return PerceptionResult(
+        # Cleanup image buffers
+        del img
+        if screenshot_bytes is not None and screenshot_b64:
+            del screenshot_bytes
+
+        result = PerceptionResult(
             success=True,
             page=page,
             elements=fused_elements,
@@ -264,6 +284,11 @@ class PerceptionPipeline:
             version="1.0.0",
             warnings=warnings,
         )
+
+        self._last_perception_key = cache_key
+        self._last_result = result
+
+        return result
 
     def _error_result(self, code: str, message: str) -> PerceptionResult:
         """Build an error PerceptionResult."""

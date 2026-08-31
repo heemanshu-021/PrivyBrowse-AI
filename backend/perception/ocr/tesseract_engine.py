@@ -33,14 +33,23 @@ except ImportError:
     _PYTESSERACT_AVAILABLE = False
 
 
+import hashlib
+from collections import OrderedDict
+
 class TesseractOCREngine(BaseOCREngine):
     """
-    Real Tesseract-based OCR engine.
+    Real Tesseract-based OCR engine with LRU crop caching and deduplication.
     Extracts text from images with per-word bounding boxes and confidence scores.
     """
 
-    def __init__(self):
+    def __init__(self, max_cache_entries: int = 50):
         self._available = _PYTESSERACT_AVAILABLE and _TESSERACT_BINARY_OK
+        self._ocr_cache: OrderedDict[str, List[OCRResult]] = OrderedDict()
+        self._max_cache = max_cache_entries
+
+    def clear_cache(self):
+        """Invalidates all cached OCR results."""
+        self._ocr_cache.clear()
 
     def is_available(self) -> bool:
         return self._available
@@ -57,6 +66,7 @@ class TesseractOCREngine(BaseOCREngine):
             "model_size_mb": 30,
             "offline": True,
             "license": "Apache-2.0",
+            "cache_size": len(self._ocr_cache)
         }
         if self._available:
             try:
@@ -67,10 +77,24 @@ class TesseractOCREngine(BaseOCREngine):
 
     def extract_text(self, image: np.ndarray) -> List[OCRResult]:
         """
-        Run Tesseract OCR on the given image.
+        Run Tesseract OCR on the given image with hash-based LRU memoization.
         Returns word-level text boxes with confidence scores.
         """
+        if image is None or image.size == 0:
+            return []
+
+        # 1. Compute fast structural hash of image
+        try:
+            img_hash = hashlib.md5(image.tobytes()[:32768]).hexdigest() + f"_{image.shape}"
+            if img_hash in self._ocr_cache:
+                self._ocr_cache.move_to_end(img_hash)
+                return [OCRResult(**r.model_dump()) for r in self._ocr_cache[img_hash]]
+        except Exception:
+            img_hash = None
+
         if not self._available:
+            if img_hash is not None:
+                self._ocr_cache[img_hash] = []
             return []
 
         try:
@@ -130,6 +154,11 @@ class TesseractOCREngine(BaseOCREngine):
                     bbox=[min_x, min_y, max_x, max_y],
                     source="TESSERACT",
                 ))
+
+            if img_hash is not None:
+                self._ocr_cache[img_hash] = results
+                if len(self._ocr_cache) > self._max_cache:
+                    self._ocr_cache.popitem(last=False)
 
             return results
 

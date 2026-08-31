@@ -10,14 +10,21 @@ from typing import List, Dict, Any, Optional
 from backend.agent.schemas import TaskStep, ObjectiveStatus, AgentTask, TaskState
 
 
+from collections import OrderedDict
+
 class GoalDecomposer:
     """
     Decomposes high-level natural language browser goals into structured sequences of TaskSteps
-    and dynamically replans remaining sub-goals when browser context changes.
+    and dynamically replans remaining sub-goals with LRU memoization.
     """
 
-    def __init__(self):
-        pass
+    def __init__(self, max_cache: int = 50):
+        self._decompose_cache: OrderedDict[str, List[TaskStep]] = OrderedDict()
+        self._max_cache = max_cache
+
+    def clear_cache(self):
+        """Flushes the goal decomposition cache."""
+        self._decompose_cache.clear()
 
     def _extract_search_query(self, goal_text: str) -> str:
         """Extracts the primary search term from natural language query goals."""
@@ -56,7 +63,15 @@ class GoalDecomposer:
         """
         Decomposes goal_text into an ordered list of TaskSteps with step dependencies.
         """
-        goal_lower = goal_text.strip().lower()
+        if not goal_text:
+            return []
+
+        clean_key = goal_text.strip()
+        if clean_key in self._decompose_cache:
+            self._decompose_cache.move_to_end(clean_key)
+            return [TaskStep(**s.model_dump()) for s in self._decompose_cache[clean_key]]
+
+        goal_lower = clean_key.lower()
         steps: List[TaskStep] = []
 
         # -------------------------------------------------------------
@@ -255,6 +270,10 @@ class GoalDecomposer:
                 success_criteria="page responds to executed action",
                 dependencies=["step-001"]
             ))
+
+        self._decompose_cache[clean_key] = steps
+        if len(self._decompose_cache) > self._max_cache:
+            self._decompose_cache.popitem(last=False)
 
         return steps
 

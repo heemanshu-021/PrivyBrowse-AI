@@ -117,6 +117,14 @@ class BrowserActionBridge:
         Returns the action_id. The caller should then call wait_for_result().
         """
         with self._lock:
+            # Enforce max pending queue bound (max 50)
+            if len(self._pending) >= 50:
+                oldest_k = next(iter(self._pending))
+                del self._pending[oldest_k]
+                if oldest_k in self._events:
+                    self._events[oldest_k].set()
+                    del self._events[oldest_k]
+
             action.status = "PENDING"
             action.created_at = datetime.now(timezone.utc).isoformat()
             self._pending[action.action_id] = action

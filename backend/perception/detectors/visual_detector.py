@@ -11,10 +11,14 @@ from typing import List, Dict, Any, Tuple
 from backend.perception.core.schemas import BoundingBox, PerceivedElement
 
 
+import hashlib
+from collections import OrderedDict
+
 class VisualDetector:
     """
     Uses OpenCV computer vision to detect visual interactive elements
     (buttons, inputs, checkboxes, etc.) from a raw screenshot image.
+    Includes LRU contour memoization for identical visual frames.
 
     Pipeline:
       1. Grayscale conversion
@@ -31,6 +35,14 @@ class VisualDetector:
     MIN_ELEMENT_SIZE = 8
     MAX_ELEMENT_RATIO = 0.92  # Skip contours larger than 92% of image dimension
 
+    def __init__(self, max_cache_entries: int = 50):
+        self._cache: OrderedDict[str, List[PerceivedElement]] = OrderedDict()
+        self._max_cache = max_cache_entries
+
+    def clear_cache(self):
+        """Invalidates visual contour cache."""
+        self._cache.clear()
+
     def detect(self, img: np.ndarray) -> List[PerceivedElement]:
         """
         Detect UI elements from a BGR or grayscale OpenCV image.
@@ -42,6 +54,15 @@ class VisualDetector:
         h, w = img.shape[:2]
         if h == 0 or w == 0:
             return []
+
+        # Fast hash check for identical frame
+        try:
+            frame_hash = hashlib.md5(img.tobytes()[:32768]).hexdigest() + f"_{img.shape}"
+            if frame_hash in self._cache:
+                self._cache.move_to_end(frame_hash)
+                return [PerceivedElement(**e.model_dump()) for e in self._cache[frame_hash]]
+        except Exception:
+            frame_hash = None
 
         # Convert to grayscale if needed
         if len(img.shape) == 3:
@@ -116,6 +137,11 @@ class VisualDetector:
                 attributes={},
                 visibility="VISIBLE",
             ))
+
+        if frame_hash is not None:
+            self._cache[frame_hash] = result
+            if len(self._cache) > self._max_cache:
+                self._cache.popitem(last=False)
 
         return result
 

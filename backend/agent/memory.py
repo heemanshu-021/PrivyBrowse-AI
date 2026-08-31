@@ -84,6 +84,8 @@ class AgentMemory:
             metadata=metadata or {}
         )
         self.checkpoints.append(checkpoint)
+        if len(self.checkpoints) > 50:
+            self.checkpoints.pop(0)
         return checkpoint
 
     def get_latest_checkpoint(self, task_id: Optional[str] = None) -> Optional[TaskCheckpoint]:
