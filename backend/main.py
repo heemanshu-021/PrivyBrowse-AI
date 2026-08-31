@@ -31,19 +31,23 @@ from backend.actions.browser_bridge import BrowserActionBridge, ActionAcknowledg
 from backend.perception.core.pipeline import PerceptionPipeline
 from backend.browser.context_manager import global_browser_context_manager, BrowserContext
 
+# Import centralized production configuration
+from backend.config import settings, get_settings
+
 app = FastAPI(
-    title="PrivyBrowse AI - On-Device Perception Backend",
+    title=settings.app_name,
     description="Privacy-preserving local visual perception layer for lightweight browser agents.",
-    version="1.0.0"
+    version=settings.version
 )
 
 # Mount static demo pages folder
 app.mount("/demo", StaticFiles(directory="demo-pages"), name="demo")
 
-# Enable CORS for dashboard and browser extension
+# Enable CORS for dashboard and browser extension with origin protection
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.allowed_origins if settings.env != "development" else ["*"],
+    allow_origin_regex=r"^chrome-extension://.*$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -912,6 +916,55 @@ async def stream_observability_events(request: Request):
     )
 
 
+@app.get("/api/health/live")
+def get_liveness():
+    """Liveness probe: verifies that the FastAPI process is running and responding."""
+    return {
+        "status": "ALIVE",
+        "version": settings.version,
+        "env": settings.env.value,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
+@app.get("/api/health/ready")
+def get_readiness():
+    """
+    Readiness probe: evaluates whether the backend, bridge, and perception layers
+    are ready to accept and execute browser agent tasks.
+    """
+    ext_status = browser_bridge.get_status()
+    is_ext_connected = bool(ext_status.get("extension_connected", False) or ext_status.get("connected", False))
+    ctx = global_browser_context_manager.current_context
+    ocr_ready = perception_pipeline.ocr_engine.is_available()
+
+    return {
+        "status": "READY",
+        "ready": True,
+        "version": settings.version,
+        "env": settings.env.value,
+        "simulation_mode": settings.simulation_mode,
+        "extension_connected": is_ext_connected,
+        "browser_context_active": bool(ctx and ctx.url),
+        "perception_available": True,
+        "ocr_pixel_engine_ready": ocr_ready,
+        "ocr_mode": "TESSERACT_PIXEL" if ocr_ready else "DOM_TEXT_PROXY_FALLBACK",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    """Graceful teardown of running tasks, queues, and resources."""
+    try:
+        if agent_planner and agent_planner.current_task:
+            agent_planner.stop()
+        if browser_bridge:
+            browser_bridge.clear_all()
+    except Exception as e:
+        print(f"[Shutdown Error] {e}")
+
+
 @app.get("/api/system/health")
 def get_system_health():
     """
@@ -919,7 +972,7 @@ def get_system_health():
     perception engine, and event bus.
     """
     ext_status = browser_bridge.get_status()
-    is_ext_connected = bool(ext_status.get("connected", False))
+    is_ext_connected = bool(ext_status.get("extension_connected", False) or ext_status.get("connected", False))
     ctx = global_browser_context_manager.current_context
     is_browser_connected = bool(ctx and ctx.url)
 

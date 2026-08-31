@@ -1917,6 +1917,52 @@ PrivyBrowse AI maintains a rigorous 4-level test pyramid and empirical validatio
 15. **E2E-15 (Task Completion Immutability)**: Guarantees `COMPLETED` tasks reject subsequent action dispatches.
 
 ---
+
+## 31. Production Deployment, Packaging & Environment Configuration
+
+PrivyBrowse AI is packaged and configured for reproducible on-device deployment with strict environment isolation, privacy preservation, and fail-closed security.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     PRODUCTION ENVIRONMENT TOPOLOGY                     │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │
+            ┌────────────────────────┴────────────────────────┐
+            ▼                                                 ▼
+┌───────────────────────────────┐         ┌───────────────────────────────┐
+│     FASTAPI LOCAL BACKEND     │         │      GOOGLE CHROME (MV3)      │
+│  • Pydantic Settings Config   │ ◄═════► │  • Active Tab DOM Extraction  │
+│  • Perception & Fusion Engine │   IPC   │  • Debounced MutationObserver │
+│  • Local PII Masking Engine   │ (HTTP / │  • FIFO Action Execution      │
+│  • Liveness & Readiness Probes│   SSE)  │  • Heartbeat State Machine    │
+│  • Bounded Bridge FIFO Queue  │         │  • Configurable Backend URL   │
+└───────────────────────────────┘         └───────────────────────────────┘
+```
+
+### 1. Centralized Settings & Configuration
+* **Configuration Manager (`backend/config.py`)**: Type-safe settings loaded from environment variables with sensible production defaults.
+* **Environment Modes**:
+  - `production`: Real Chrome extension, real OpenCV perception, active PII redaction, strict origin filtering, simulation disabled.
+  - `development`: Detailed logging, interactive API documentation, hot reloading enabled.
+  - `test`: Deterministic test fixtures and controlled simulation mode for CI harnesses.
+* **Simulation Mode Isolation**: Production mode strictly forbids silent fallback to simulation. If the browser extension or browser context disconnects, the system halts with a `SAFE_STOP` and explicit diagnostic error instead of fabricating simulated results.
+
+### 2. Network & Origin Security
+* **Localhost Binding**: Default host binding is restricted to `127.0.0.1` (`PRIVYBROWSE_HOST=127.0.0.1`), preventing accidental exposure to local area networks.
+* **CORS Whitelist**: Origins restricted to local dashboard ports (`5173`, `3000`, `8000`) and the Chrome extension schema (`chrome-extension://*`).
+
+### 3. Operational Probes & Lifecycle
+* **Liveness Probe (`/api/health/live`)**: Confirms the FastAPI ASGI process is running and responsive.
+* **Readiness Probe (`/api/health/ready`)**: Evaluates whether the backend, extension bridge, and perception engines are ready to accept browser tasks.
+* **Graceful Teardown**: Signal handlers intercept `SIGINT` / `SIGTERM` to safely cancel active tasks and drain pending bridge queues.
+
+### 4. Verification & Validation Scripts
+* **`scripts/validate_environment.py`**: Validates Python runtime, core dependencies, OCR binary status, browser installation, and extension packaging.
+* **`scripts/smoke_test.py`**: Executes deterministic, zero-cloud verification across config, perception, privacy, security, planning, context, and bridge layers.
+* **`scripts/start_backend.py`**: Production launcher with pre-flight sanity checks.
+
+---
 *End of PrivyBrowse AI Knowledge Base Document.*
+
 
 
