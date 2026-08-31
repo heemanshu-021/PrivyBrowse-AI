@@ -198,13 +198,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
   // Automatic initial browser context extraction on completed navigation
   if (changeInfo.status === "complete" && tab && tab.url && !isRestrictedUrl(tab.url)) {
-    chrome.tabs.query({ active: true, currentWindow: true }).then(([activeTab]) => {
-      if (activeTab && activeTab.id === tabId) {
-        orchestrateAnalysis().catch((err) => {
-          console.debug("[PrivyBrowse Auto-Analysis]", err.message);
-        });
-      }
-    }).catch(() => {});
+    orchestrateAnalysis(tab).catch((err) => {
+      console.debug("[PrivyBrowse Auto-Analysis]", err.message || err);
+    });
   }
 });
 
@@ -379,7 +375,7 @@ function startHeartbeat() {
 // -------------------------------------------------------------
 
 async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || tab.id === undefined) {
     throw new Error("No active browser tab found.");
   }
@@ -389,25 +385,29 @@ async function getActiveTab() {
   return tab;
 }
 
-async function captureActiveTab() {
-  await getActiveTab();
+async function captureActiveTab(targetTab = null) {
+  const tab = targetTab || await getActiveTab();
   try {
-    return await chrome.tabs.captureVisibleTab(chrome.windows.WINDOW_ID_CURRENT, { format: "png" });
+    return await chrome.tabs.captureVisibleTab(tab.windowId || null, { format: "png" });
   } catch (err) {
     throw new Error(`Screenshot capture failed: ${err.message || "Permission denied"}`);
   }
 }
 
-async function orchestrateAnalysis() {
-  const tab = await getActiveTab();
+async function orchestrateAnalysis(providedTab = null) {
+  const tab = providedTab || await getActiveTab();
   const tabId = tab.id;
+
+  if (tab.url && isRestrictedUrl(tab.url)) {
+    throw new Error("This page is restricted and cannot be analyzed.");
+  }
 
   // 1. Capture viewport screenshot
   let screenshotDataUrl = "";
   try {
-    screenshotDataUrl = await chrome.tabs.captureVisibleTab(chrome.windows.WINDOW_ID_CURRENT, { format: "png" });
+    screenshotDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId || null, { format: "png" });
   } catch (e) {
-    console.warn("[PrivyBrowse] Screenshot capture note:", e);
+    console.warn("[PrivyBrowse] Screenshot capture note:", e.message || e);
   }
 
   // 2. Query DOM extraction from content script with injection recovery

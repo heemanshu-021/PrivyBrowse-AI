@@ -8,11 +8,9 @@ export const OverviewPage: React.FC = () => {
     privacyStatus,
     backendConnected,
     extensionConnected,
-    currentScenario,
     taskText,
     metrics,
     piiEntities,
-    fusedElements,
     runPipeline,
     setActivePage,
     isProcessing,
@@ -141,7 +139,7 @@ export const OverviewPage: React.FC = () => {
         </div>
       </section>
 
-      {/* 3. Real Active Task & Step Dependency Timeline */}
+      {/* 3. Active Task Execution Graph & Timeline */}
       <div className="card">
         <div className="card-header">
           <span className="card-title">
@@ -149,8 +147,8 @@ export const OverviewPage: React.FC = () => {
             <span>Active Task & Step Execution Graph</span>
           </span>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <span className="badge badge-cyan">
-              {activeTask ? `TASK ID: ${activeTask.task_id}` : 'SIMULATION MODE'}
+            <span className={`badge ${activeTask ? 'badge-cyan' : 'badge-green'}`}>
+              {activeTask ? `TASK ID: ${activeTask.task_id}` : 'READY'}
             </span>
             <span className="badge badge-green">{taskProgressPct}% PROGRESS</span>
           </div>
@@ -257,6 +255,7 @@ export const OverviewPage: React.FC = () => {
       </div>
 
       {/* 4. Live Browser Context & Privacy/Security Gauges Row */}
+      {/* 4. Real-Time Telemetry & Context Row */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '20px' }}>
         {/* Browser Context Card */}
         <div className="card">
@@ -265,27 +264,35 @@ export const OverviewPage: React.FC = () => {
               <span className="card-title-icon">🌐</span>
               <span>Active Browser Context</span>
             </span>
-            <span className="badge badge-cyan">{browserContext ? `TAB #${browserContext.tab_id || 1}` : 'DEMO SANDBOX'}</span>
+            <span className={`badge ${browserContext ? 'badge-cyan' : 'badge-amber'}`}>
+              {browserContext ? `TAB #${browserContext.tab_id || 1}` : 'AWAITING TAB'}
+            </span>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '12px' }}>
               <span style={{ color: 'var(--text-muted)' }}>Active URL:</span>
-              <code style={{ color: 'var(--accent-cyan)' }}>{browserContext ? browserContext.url : currentScenario.url}</code>
+              <code style={{ color: browserContext ? 'var(--accent-cyan)' : 'var(--text-muted)' }}>
+                {browserContext ? browserContext.url : 'No browser context synchronized'}
+              </code>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '12px' }}>
               <span style={{ color: 'var(--text-muted)' }}>Page Title:</span>
-              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{browserContext ? browserContext.title : currentScenario.name}</span>
+              <span style={{ fontWeight: 600, color: browserContext ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                {browserContext ? browserContext.title : 'Awaiting Active Tab'}
+              </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '12px' }}>
               <span style={{ color: 'var(--text-muted)' }}>Layout Elements:</span>
-              <strong style={{ color: 'var(--accent-green)', fontFamily: 'var(--font-mono)' }}>
-                {browserContext ? browserContext.element_count : fusedElements.length || currentScenario.expectedElements} elements
+              <strong style={{ color: browserContext ? 'var(--accent-green)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                {browserContext ? `${browserContext.element_count} elements` : '0 elements'}
               </strong>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '12px' }}>
               <span style={{ color: 'var(--text-muted)' }}>Page Load State:</span>
-              <span className="badge badge-green">{browserContext ? browserContext.loading_state : 'COMPLETE'}</span>
+              <span className={`badge ${browserContext ? 'badge-green' : 'badge-amber'}`}>
+                {browserContext ? browserContext.loading_state : 'STANDBY'}
+              </span>
             </div>
           </div>
         </div>
