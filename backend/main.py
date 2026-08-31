@@ -193,6 +193,7 @@ class AgentControlRequest(BaseModel):
 
 @app.get("/api/health")
 def health_check():
+    browser_bridge.register_heartbeat()
     return {
         "status": "healthy",
         "service": "PrivyBrowse Local Perception Engine",
@@ -995,7 +996,7 @@ def get_dashboard_overview():
     Returns aggregated real-time dashboard snapshot for instant hydration.
     """
     ext_status = browser_bridge.get_status()
-    is_ext_connected = bool(ext_status.get("connected", False))
+    is_ext_connected = bool(ext_status.get("extension_connected", False) or ext_status.get("connected", False))
     ctx = global_browser_context_manager.current_context
     is_browser_connected = bool(ctx and ctx.url)
 

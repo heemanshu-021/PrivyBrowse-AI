@@ -195,6 +195,17 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       status: changeInfo.status
     });
   }
+
+  // Automatic initial browser context extraction on completed navigation
+  if (changeInfo.status === "complete" && tab && tab.url && !isRestrictedUrl(tab.url)) {
+    chrome.tabs.query({ active: true, currentWindow: true }).then(([activeTab]) => {
+      if (activeTab && activeTab.id === tabId) {
+        orchestrateAnalysis().catch((err) => {
+          console.debug("[PrivyBrowse Auto-Analysis]", err.message);
+        });
+      }
+    }).catch(() => {});
+  }
 });
 
 // 4. Tab Closed
